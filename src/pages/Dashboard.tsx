@@ -1,5 +1,6 @@
 import { Layout } from '@/components/layout/Layout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
+import { MetricsCard } from '@/components/dashboard/MetricsCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { 
   MessageSquare, 
@@ -15,32 +16,32 @@ import {
 const Dashboard = () => {
   const statsData = [
     {
-      title: 'Total de Atendimentos',
-      value: '1.248',
-      subtitle: 'Hoje',
-      trend: { value: '12%', isPositive: true },
-      icon: MessageSquare
-    },
-    {
-      title: 'Resolvidos pela IA',
-      value: '876',
-      subtitle: 'Automáticos',
-      trend: { value: '8%', isPositive: true },
-      icon: CheckCircle
-    },
-    {
-      title: 'Pendências Humanas',
-      value: '372',
-      subtitle: 'Aguardando',
-      trend: { value: '5%', isPositive: false },
+      title: 'Atendimentos Pendentes',
+      value: '27',
+      subtitle: 'Aguardando atendente',
+      trend: { value: '8%', isPositive: false },
       icon: Clock
     },
     {
-      title: 'Índice de Satisfação',
-      value: '215',
-      subtitle: 'Média 4.8/5',
+      title: 'Tempo Médio de Resposta',
+      value: '2.4min',
+      subtitle: 'Meta: < 3min',
       trend: { value: '15%', isPositive: true },
-      icon: Users
+      icon: TrendingUp
+    },
+    {
+      title: 'Taxa de Resolução',
+      value: '89%',
+      subtitle: 'Resolvidos hoje',
+      trend: { value: '12%', isPositive: true },
+      icon: CheckCircle
+    },
+    {
+      title: 'Atendimentos IA vs Humano',
+      value: '76%',
+      subtitle: 'Resolvidos pela IA',
+      trend: { value: '5%', isPositive: true },
+      icon: MessageSquare
     }
   ];
 
@@ -128,7 +129,7 @@ const Dashboard = () => {
         </div>
 
         {/* Charts and Recent Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Channel Distribution */}
           <Card className="shadow-card">
             <CardHeader>
@@ -202,6 +203,9 @@ const Dashboard = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Metrics and Export */}
+          <MetricsCard />
         </div>
       </div>
     </Layout>

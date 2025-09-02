@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Layout } from '@/components/layout/Layout';
+import { TransferModal } from '@/components/atendimentos/TransferModal';
+import { CloseTicketModal } from '@/components/atendimentos/CloseTicketModal';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,13 +18,18 @@ import {
   Clock,
   CheckCircle2,
   Bot,
-  User
+  User,
+  UserCheck,
+  RotateCcw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const Atendimentos = () => {
   const [selectedChat, setSelectedChat] = useState<number | null>(1);
   const [messageText, setMessageText] = useState('');
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const chats = [
     {
@@ -33,7 +40,8 @@ const Atendimentos = () => {
       lastMessage: 'Preciso de ajuda com meu pedido #1234',
       time: '2 min atrás',
       unread: 3,
-      avatar: 'MS'
+      avatar: 'MS',
+      attendant: null
     },
     {
       id: 2,
@@ -43,7 +51,8 @@ const Atendimentos = () => {
       lastMessage: 'Quando vai chegar minha encomenda?',
       time: '5 min atrás',
       unread: 0,
-      avatar: 'JS'
+      avatar: 'JS',
+      attendant: 'Carlos Silva'
     },
     {
       id: 3,
@@ -53,7 +62,8 @@ const Atendimentos = () => {
       lastMessage: 'Gostaria de cancelar minha assinatura',
       time: '10 min atrás',
       unread: 1,
-      avatar: 'AC'
+      avatar: 'AC',
+      attendant: null
     },
     {
       id: 4,
@@ -63,7 +73,8 @@ const Atendimentos = () => {
       lastMessage: 'Muito obrigado pelo atendimento!',
       time: '1 hora atrás',
       unread: 0,
-      avatar: 'PL'
+      avatar: 'PL',
+      attendant: 'Ana Santos'
     }
   ];
 
@@ -155,6 +166,11 @@ const Atendimentos = () => {
 
   const selectedChatData = chats.find(chat => chat.id === selectedChat);
 
+  const filteredChats = chats.filter(chat => {
+    if (statusFilter === 'all') return true;
+    return chat.status === statusFilter;
+  });
+
   return (
     <Layout>
       <div className="space-y-6 h-[calc(100vh-8rem)]">
@@ -172,10 +188,22 @@ const Atendimentos = () => {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">Conversas</CardTitle>
-                <Button variant="outline" size="sm">
-                  <Filter className="w-4 h-4 mr-2" />
-                  Filtros
-                </Button>
+                <div className="flex gap-2">
+                  <select 
+                    value={statusFilter} 
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="text-xs border rounded px-2 py-1"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="pendente">Pendentes</option>
+                    <option value="em_andamento">Em Andamento</option>
+                    <option value="concluido">Concluídos</option>
+                  </select>
+                  <Button variant="outline" size="sm">
+                    <Filter className="w-4 h-4 mr-2" />
+                    Filtros
+                  </Button>
+                </div>
               </div>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -187,7 +215,7 @@ const Atendimentos = () => {
             </CardHeader>
             <CardContent className="p-0">
               <div className="max-h-[600px] overflow-y-auto">
-                {chats.map((chat) => {
+                {filteredChats.map((chat) => {
                   const status = getStatusBadge(chat.status);
                   return (
                     <div
@@ -218,6 +246,11 @@ const Atendimentos = () => {
                               <Badge variant="outline" className={status.className}>
                                 {status.label}
                               </Badge>
+                              {chat.attendant && (
+                                <span className="text-xs text-muted-foreground">
+                                  • {chat.attendant}
+                                </span>
+                              )}
                             </div>
                             {chat.unread > 0 && (
                               <span className="bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
@@ -259,10 +292,32 @@ const Atendimentos = () => {
                       <Badge variant="outline" className={getStatusBadge(selectedChatData.status).className}>
                         {getStatusBadge(selectedChatData.status).label}
                       </Badge>
-                      <Button variant="outline" size="sm">
-                        <CheckCircle2 className="w-4 h-4 mr-2" />
-                        Encerrar
-                      </Button>
+                      {selectedChatData.status !== 'concluido' && (
+                        <>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setShowTransferModal(true)}
+                          >
+                            <UserCheck className="w-4 h-4 mr-2" />
+                            Transferir
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setShowCloseModal(true)}
+                          >
+                            <CheckCircle2 className="w-4 h-4 mr-2" />
+                            Encerrar
+                          </Button>
+                        </>
+                      )}
+                      {selectedChatData.status === 'concluido' && (
+                        <Button variant="outline" size="sm">
+                          <RotateCcw className="w-4 h-4 mr-2" />
+                          Reabrir
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
@@ -353,6 +408,30 @@ const Atendimentos = () => {
             )}
           </div>
         </div>
+
+        {/* Modals */}
+        {selectedChatData && (
+          <>
+            <TransferModal
+              isOpen={showTransferModal}
+              onClose={() => setShowTransferModal(false)}
+              clientName={selectedChatData.client}
+              currentAttendant={selectedChatData.attendant}
+            />
+            <CloseTicketModal
+              isOpen={showCloseModal}
+              onClose={() => setShowCloseModal(false)}
+              clientName={selectedChatData.client}
+              ticketData={{
+                startTime: "14:32",
+                totalMessages: 5,
+                aiMessages: 2,
+                humanMessages: 1,
+                channel: selectedChatData.channel
+              }}
+            />
+          </>
+        )}
       </div>
     </Layout>
   );

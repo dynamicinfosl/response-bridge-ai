@@ -280,22 +280,36 @@ const Configuracoes = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Settings className="w-5 h-5 text-primary" />
-              Informações do Sistema
+              Configurações do Sistema
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Versão:</span>
-                <span className="ml-2 font-medium">v1.0.0</span>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="flex items-center justify-between p-4 border border-border rounded-lg">
+                <div>
+                  <h3 className="font-medium">Configurações Avançadas</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Configure horários de atendimento, webhooks e automações
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => window.location.href = '/configuracoes-avancadas'}>
+                  Configurar
+                </Button>
               </div>
-              <div>
-                <span className="text-muted-foreground">Última atualização:</span>
-                <span className="ml-2 font-medium">2024-01-15</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Servidor:</span>
-                <span className="ml-2 font-medium">Online</span>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm mt-4">
+                <div>
+                  <span className="text-muted-foreground">Versão:</span>
+                  <span className="ml-2 font-medium">v1.0.0</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Última atualização:</span>
+                  <span className="ml-2 font-medium">2024-01-15</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Servidor:</span>
+                  <span className="ml-2 font-medium">Online</span>
+                </div>
               </div>
             </div>
           </CardContent>
