@@ -5,11 +5,11 @@ import {
   MessageSquare, 
   Users, 
   Settings, 
-  ChevronLeft,
-  Building2
+  ChevronLeft
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import logoImage from '../../assets/Adapt-Link-Logo.png';
 
 const menuItems = [
   {
@@ -50,8 +50,12 @@ export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
       {/* Logo Section */}
       <div className="flex items-center h-16 px-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-primary rounded-lg flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-primary-foreground" />
+          <div className="w-8 h-8 flex items-center justify-center">
+            <img 
+              src={logoImage} 
+              alt="Adapt Link Logo" 
+              className="w-8 h-8 object-contain"
+            />
           </div>
           {!collapsed && (
             <div className="flex flex-col">

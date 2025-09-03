@@ -1,9 +1,18 @@
+import logoImage from '../assets/Adapt-Link-Logo.png';
+
 // Update this page (the content is just a fallback if you fail to update the page)
 
 const Index = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="text-center">
+        <div className="mx-auto w-20 h-20 flex items-center justify-center mb-6">
+          <img 
+            src={logoImage} 
+            alt="Adapt Link Logo" 
+            className="w-20 h-20 object-contain"
+          />
+        </div>
         <h1 className="text-4xl font-bold mb-4 text-primary">Adapt Link SaaS</h1>
         <p className="text-xl text-muted-foreground mb-6">
           Sistema de Atendimento Multicanal com IA
