@@ -9,6 +9,10 @@ import Atendimentos from "./pages/Atendimentos";
 import Colaboradores from "./pages/Colaboradores";
 import Configuracoes from "./pages/Configuracoes";
 import ConfiguracoesAvancadas from "./pages/ConfiguracoesAvancadas";
+import LigacoesIA from "./pages/LigacoesIA";
+import OrdemServico from "./pages/OrdemServico";
+import Relatorios from "./pages/Relatorios";
+import ConfiguracaoIA from "./pages/ConfiguracaoIA";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +29,10 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/atendimentos" element={<Atendimentos />} />
           <Route path="/colaboradores" element={<Colaboradores />} />
+          <Route path="/ligacoes-ia" element={<LigacoesIA />} />
+          <Route path="/ordem-servico" element={<OrdemServico />} />
+          <Route path="/relatorios" element={<Relatorios />} />
+          <Route path="/configuracao-ia" element={<ConfiguracaoIA />} />
           <Route path="/configuracoes" element={<Configuracoes />} />
           <Route path="/configuracoes-avancadas" element={<ConfiguracoesAvancadas />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { MetricsCard } from '@/components/dashboard/MetricsCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   MessageSquare, 
   Clock, 
@@ -10,10 +13,27 @@ import {
   TrendingUp,
   Phone,
   Mail,
-  MessageCircle
+  MessageCircle,
+  Download,
+  RefreshCw,
+  Calendar
 } from 'lucide-react';
 
 const Dashboard = () => {
+  const [selectedPeriod, setSelectedPeriod] = useState('30');
+
+  const handleExport = () => {
+    // Simular exportação de dados
+    console.log('Exportando dados do período:', selectedPeriod);
+    // Aqui você implementaria a lógica real de exportação
+  };
+
+  const handleRefresh = () => {
+    // Simular atualização de dados
+    console.log('Atualizando dados...');
+    // Aqui você implementaria a lógica real de atualização
+    window.location.reload(); // Por enquanto, recarrega a página
+  };
   const statsData = [
     {
       title: 'Atendimentos Pendentes',
@@ -112,24 +132,67 @@ const Dashboard = () => {
 
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Visão geral dos atendimentos e métricas
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Dashboard - Visão Geral</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Visão geral dos atendimentos e métricas
+            </p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            {/* Seletor de Período */}
+            <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1.5">
+              <Calendar className="w-3 h-3 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Período:</span>
+              <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+                <SelectTrigger className="w-32 border-0 shadow-none focus:ring-0 h-6 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">Últimos 7 dias</SelectItem>
+                  <SelectItem value="30">Últimos 30 dias</SelectItem>
+                  <SelectItem value="90">Últimos 90 dias</SelectItem>
+                  <SelectItem value="365">Último ano</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Botões de Ação */}
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleExport}
+                className="flex items-center gap-1.5 h-7 px-2 text-xs"
+              >
+                <Download className="w-3 h-3" />
+                <span className="hidden sm:inline">Exportar</span>
+              </Button>
+              
+              <Button 
+                size="sm"
+                onClick={handleRefresh}
+                className="flex items-center gap-1.5 h-7 px-2 text-xs"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span className="hidden sm:inline">Atualizar</span>
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {statsData.map((stat, index) => (
             <StatsCard key={index} {...stat} />
           ))}
         </div>
 
         {/* Charts and Recent Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Channel Distribution */}
           <Card className="shadow-card">
             <CardHeader>
