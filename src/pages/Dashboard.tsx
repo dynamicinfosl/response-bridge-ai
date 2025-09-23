@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { MetricsCard } from '@/components/dashboard/MetricsCard';
+import { InsightsCard } from '@/components/dashboard/InsightsCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -192,31 +193,34 @@ const Dashboard = () => {
         </div>
 
         {/* Charts and Recent Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {/* Channel Distribution */}
           <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Distribuição por Canal
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+                <span>Distribuição por Canal</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
+            <CardContent className="pt-0">
+              <div className="space-y-4 sm:space-y-5">
                 {channelData.map((channel) => (
-                  <div key={channel.name} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${channel.color}`} />
-                      <span className="text-sm font-medium">{channel.name}</span>
+                  <div key={channel.name} className="flex items-center justify-between gap-4">
+                    {/* Canal info */}
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className={`w-3 h-3 sm:w-4 sm:h-4 rounded-full flex-shrink-0 ${channel.color}`} />
+                      <span className="text-sm sm:text-base font-medium">{channel.name}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-20 bg-muted rounded-full h-2">
+                    
+                    {/* Progress bar and percentage */}
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="w-24 sm:w-32 md:w-40 bg-muted rounded-full h-2 sm:h-3">
                         <div 
-                          className={`h-2 rounded-full ${channel.color}`}
+                          className={`h-2 sm:h-3 rounded-full transition-all duration-300 ${channel.color}`}
                           style={{ width: `${channel.value}%` }}
                         />
                       </div>
-                      <span className="text-sm text-muted-foreground w-8 text-right">
+                      <span className="text-sm sm:text-base text-muted-foreground w-10 sm:w-12 text-right font-semibold">
                         {channel.value}%
                       </span>
                     </div>
@@ -228,34 +232,34 @@ const Dashboard = () => {
 
           {/* Recent Chats */}
           <Card className="shadow-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-primary" />
-                Conversas Recentes
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+                <span>Conversas Recentes</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
+            <CardContent className="pt-0">
+              <div className="space-y-4 sm:space-y-5">
                 {recentChats.map((chat) => (
-                  <div key={chat.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
-                    <div className="flex-shrink-0">
+                  <div key={chat.id} className="flex items-start gap-4 p-4 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
+                    <div className="flex-shrink-0 mt-1">
                       {getChannelIcon(chat.channel)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <h4 className="text-sm font-medium truncate">{chat.client}</h4>
-                        <span className="text-xs text-muted-foreground">{chat.time}</span>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-base sm:text-lg font-semibold truncate">{chat.client}</h4>
+                        <span className="text-sm text-muted-foreground">{chat.time}</span>
                       </div>
-                      <p className="text-sm text-muted-foreground truncate">
+                      <p className="text-sm sm:text-base text-muted-foreground mb-3 leading-relaxed">
                         {chat.lastMessage}
                       </p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className={`text-xs px-2 py-1 rounded-full border ${getStatusBadge(chat.status)}`}>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-sm px-3 py-1.5 rounded-full border font-medium ${getStatusBadge(chat.status)}`}>
                           {chat.status === 'pendente' ? 'Pendente' : 
                            chat.status === 'em_andamento' ? 'Em andamento' : 'Concluído'}
                         </span>
                         {chat.unread > 0 && (
-                          <span className="bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                          <span className="bg-destructive text-destructive-foreground text-sm rounded-full w-6 h-6 flex items-center justify-center font-semibold">
                             {chat.unread}
                           </span>
                         )}
@@ -267,7 +271,11 @@ const Dashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Metrics and Export */}
+        </div>
+
+        {/* Insights and Metrics - Full Width */}
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <InsightsCard />
           <MetricsCard />
         </div>
       </div>
