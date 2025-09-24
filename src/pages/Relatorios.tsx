@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/components/ui/use-toast';
 import { 
   BarChart3, 
   Download, 
@@ -21,13 +23,90 @@ import {
   DollarSign,
   Activity,
   PieChart,
-  LineChart
+  LineChart,
+  Bot
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const Relatorios = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('30d');
   const [selectedReport, setSelectedReport] = useState('all');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const { toast } = useToast();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup na desmontagem do componente
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const periodOptions = [
+    { value: '7d', label: 'Últimos 7 dias' },
+    { value: '30d', label: 'Últimos 30 dias' },
+    { value: '90d', label: 'Últimos 90 dias' },
+    { value: '365d', label: 'Último ano' }
+  ];
+
+  const handleGenerateReport = async () => {
+    setIsGenerating(true);
+    toast({
+      title: "Gerando Relatório",
+      description: "Aguarde enquanto processamos os dados...",
+    });
+
+    // Simular processamento
+    timeoutRef.current = setTimeout(() => {
+      // Verificar se o componente ainda está montado
+      try {
+        setIsGenerating(false);
+        toast({
+          title: "Relatório Gerado!",
+          description: "Seu relatório foi gerado com sucesso e está disponível para download.",
+        });
+      } catch (error) {
+        console.warn('Componente foi desmontado durante o processamento');
+      }
+      timeoutRef.current = null;
+    }, 3000);
+  };
+
+  const handleDownloadReport = (reportId: string, reportTitle: string) => {
+    toast({
+      title: "Download Iniciado",
+      description: `Fazendo download de "${reportTitle}"...`,
+    });
+    
+    // Simular download
+    setTimeout(() => {
+      try {
+        toast({
+          title: "Download Concluído",
+          description: "O relatório foi baixado com sucesso!",
+        });
+      } catch (error) {
+        console.warn('Erro no download - componente pode ter sido desmontado');
+      }
+    }, 2000);
+  };
+
+  const handleQuickAction = (actionType: string) => {
+    toast({
+      title: "Ação Executada",
+      description: `Gerando ${actionType.toLowerCase()}...`,
+    });
+  };
+
+  const handleReportTypeSelect = (reportType: any) => {
+    setSelectedReport(reportType.id);
+    toast({
+      title: "Tipo de Relatório Selecionado",
+      description: `Selecionado: ${reportType.title}`,
+    });
+  };
 
   const reportTypes = [
     {
@@ -224,13 +303,26 @@ const Relatorios = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline">
-              <Calendar className="w-4 h-4 mr-2" />
-              Período
-            </Button>
-            <Button className="bg-gradient-primary hover:shadow-primary">
+            <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+              <SelectTrigger className="w-48">
+                <Calendar className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="Selecione o período" />
+              </SelectTrigger>
+              <SelectContent>
+                {periodOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button 
+              className="bg-gradient-primary hover:shadow-primary"
+              onClick={handleGenerateReport}
+              disabled={isGenerating}
+            >
               <BarChart3 className="w-4 h-4 mr-2" />
-              Gerar Relatório
+              {isGenerating ? 'Gerando...' : 'Gerar Relatório'}
             </Button>
           </div>
         </div>
@@ -280,8 +372,11 @@ const Relatorios = () => {
               {reportTypes.map((report) => (
                 <div
                   key={report.id}
-                  className="p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => setSelectedReport(report.id)}
+                  className={cn(
+                    "p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer",
+                    selectedReport === report.id && "bg-primary/10 border-primary/30"
+                  )}
+                  onClick={() => handleReportTypeSelect(report)}
                 >
                   <div className="flex items-start gap-3">
                     <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", report.bgColor)}>
@@ -388,11 +483,23 @@ const Relatorios = () => {
                     </Badge>
                     
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" disabled={report.status !== 'ready'}>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        disabled={report.status !== 'ready'}
+                        onClick={() => handleDownloadReport(report.id, report.title)}
+                      >
                         <Download className="w-4 h-4 mr-2" />
                         Download
                       </Button>
-                      <Button variant="outline" size="sm">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => toast({
+                          title: "Visualizar Relatório",
+                          description: `Abrindo visualização de "${report.title}"...`,
+                        })}
+                      >
                         <BarChart3 className="w-4 h-4 mr-2" />
                         Visualizar
                       </Button>
@@ -414,15 +521,27 @@ const Relatorios = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Button variant="outline" className="h-20 flex flex-col gap-2">
+              <Button 
+                variant="outline" 
+                className="h-20 flex flex-col gap-2"
+                onClick={() => handleQuickAction('Relatório Diário')}
+              >
                 <BarChart3 className="w-6 h-6" />
                 <span>Relatório Diário</span>
               </Button>
-              <Button variant="outline" className="h-20 flex flex-col gap-2">
+              <Button 
+                variant="outline" 
+                className="h-20 flex flex-col gap-2"
+                onClick={() => handleQuickAction('Relatório Semanal')}
+              >
                 <Calendar className="w-6 h-6" />
                 <span>Relatório Semanal</span>
               </Button>
-              <Button variant="outline" className="h-20 flex flex-col gap-2">
+              <Button 
+                variant="outline" 
+                className="h-20 flex flex-col gap-2"
+                onClick={() => handleQuickAction('Relatório Mensal')}
+              >
                 <TrendingUp className="w-6 h-6" />
                 <span>Relatório Mensal</span>
               </Button>

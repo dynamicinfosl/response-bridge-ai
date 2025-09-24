@@ -58,34 +58,29 @@ export const Navbar = ({ sidebarCollapsed }: NavbarProps) => {
   };
 
   return (
-    <header className="bg-gradient-to-r from-blue-600 to-blue-700 h-16 flex items-center px-6 relative">
+    <header className="bg-primary h-16 flex items-center px-6 relative shadow-sm">
       {/* Gradiente sutil no topo e base */}
-      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-blue-600"></div>
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-blue-600"></div>
+      <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
       
       <div className="flex items-center w-full">
-        {/* Logo e Título - Sempre visível no canto esquerdo */}
-        <div className="flex items-center gap-4">
+        {/* Logo e Título - Largura fixa */}
+        <div className="flex items-center gap-4 w-80">
           <div className="flex items-center gap-2">
-            <img 
-              src={logoImage} 
-              alt="Adapt Link Logo" 
-              className="w-8 h-8 object-contain"
-            />
-            <div className="flex items-baseline gap-1">
-              <span className="text-white font-bold text-lg drop-shadow-sm">adapt</span>
-              <span className="text-white/60 text-sm font-light">link</span>
+            <div className="flex items-baseline">
+              <span className="text-white font-bold text-xl tracking-tight">adapt</span>
+              <span className="text-white/70 text-xl font-light tracking-tight">link</span>
             </div>
           </div>
           
           <div className="h-6 w-px bg-white/30"></div>
           
-          <span className="text-white font-medium text-lg drop-shadow-sm">
+          <span className="text-white font-medium text-lg drop-shadow-sm min-w-0 truncate">
             {getPageTitle()}
           </span>
         </div>
 
-        {/* Barra de Busca */}
+        {/* Barra de Busca - Largura fixa */}
         <div className="flex-1 max-w-2xl mx-8">
           <div className="relative">
             <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -96,34 +91,26 @@ export const Navbar = ({ sidebarCollapsed }: NavbarProps) => {
           </div>
         </div>
 
-        {/* Seção Direita - Usuário */}
-        <div className="flex items-center gap-4">
-          {/* User Menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center gap-2 h-auto p-2 text-white hover:bg-white/10">
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-white text-blue-600 text-sm font-semibold">
-                    AD
-                  </AvatarFallback>
-                </Avatar>
-                <div className="hidden md:flex flex-col items-start">
-                  <span className="text-sm font-medium text-white">Admin User</span>
-                  <span className="text-xs text-white/70">Gestor</span>
-                </div>
-                <ChevronDown className="h-4 w-4 text-white/70" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem>Meu Perfil</DropdownMenuItem>
-              <DropdownMenuItem>Configurações</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={handleLogout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Sair
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {/* Seção Direita - Largura fixa */}
+        <div className="flex items-center gap-6 w-64 justify-end">
+          {/* Botão Novo */}
+          <Button 
+            className="bg-blue-300/90 hover:bg-blue-300 text-primary-foreground px-4 py-1.5 h-8 text-sm font-medium rounded-full shadow-sm border-0 flex-shrink-0"
+            onClick={() => {
+              toast({
+                title: "Novo",
+                description: "Funcionalidade em desenvolvimento...",
+              });
+            }}
+          >
+            Novo
+          </Button>
+          
+          {/* User Info */}
+          <div className="flex flex-col items-end text-right flex-shrink-0">
+            <span className="text-sm font-medium text-white whitespace-nowrap">Cláudio Jr</span>
+            <span className="text-xs text-white/80 whitespace-nowrap">Administrador</span>
+          </div>
         </div>
       </div>
     </header>
