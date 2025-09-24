@@ -5,7 +5,7 @@ import {
   CheckCircle, 
   TrendingUp, 
   AlertTriangle, 
-  CloudArrowUp 
+  UploadCloud 
 } from 'lucide-react';
 
 interface InsightItem {
@@ -40,7 +40,7 @@ export const InsightsCard = () => {
       iconBgColor: "bg-primary"
     },
     {
-      icon: CloudArrowUp,
+      icon: UploadCloud,
       title: "Sugestão de melhoria",
       description: "Treinar a IA para lidar melhor com reclamações sobre entregas atrasadas.",
       iconColor: "text-white",
