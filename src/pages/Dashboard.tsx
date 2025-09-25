@@ -186,14 +186,14 @@ const Dashboard = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {statsData.map((stat, index) => (
             <StatsCard key={index} {...stat} />
           ))}
         </div>
 
         {/* Charts and Recent Activity */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           {/* Channel Distribution */}
           <Card className="shadow-card">
             <CardHeader className="pb-4">
@@ -274,7 +274,7 @@ const Dashboard = () => {
         </div>
 
         {/* Insights and Metrics - Full Width */}
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="mt-4 sm:mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           <InsightsCard />
           <MetricsCard />
         </div>

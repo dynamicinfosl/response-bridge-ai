@@ -173,35 +173,36 @@ const Atendimentos = () => {
 
   return (
     <Layout>
-      <div className="space-y-6 h-[calc(100vh-8rem)]">
+      <div className="space-y-4 sm:space-y-6 h-[calc(100vh-8rem)]">
         {/* Page Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Atendimentos</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-foreground">Atendimentos</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
             Gerencie todas as conversas em tempo real
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 h-full">
           {/* Chat List */}
           <Card className="shadow-card">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Conversas</CardTitle>
-                <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <CardTitle className="text-base sm:text-lg">Conversas</CardTitle>
+                <div className="flex flex-col sm:flex-row gap-2">
                   <select 
                     value={statusFilter} 
                     onChange={(e) => setStatusFilter(e.target.value)}
-                    className="text-xs border rounded px-2 py-1"
+                    className="text-xs border rounded px-2 py-1.5 w-full sm:w-auto"
                   >
                     <option value="all">Todos</option>
                     <option value="pendente">Pendentes</option>
                     <option value="em_andamento">Em Andamento</option>
                     <option value="concluido">Concluídos</option>
                   </select>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="w-full sm:w-auto">
                     <Filter className="w-4 h-4 mr-2" />
-                    Filtros
+                    <span className="hidden sm:inline">Filtros</span>
+                    <span className="sm:hidden">Filtrar</span>
                   </Button>
                 </div>
               </div>
