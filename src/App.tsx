@@ -14,6 +14,7 @@ import LigacoesIA from "./pages/LigacoesIA";
 import OrdemServico from "./pages/OrdemServico";
 import Relatorios from "./pages/Relatorios";
 import ConfiguracaoIA from "./pages/ConfiguracaoIA";
+import TesteN8N from "./pages/TesteN8N";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -90,6 +91,7 @@ const App = () => (
               <Route path="/configuracao-ia" element={<ConfiguracaoIA />} />
               <Route path="/configuracoes" element={<Configuracoes />} />
               <Route path="/configuracoes-avancadas" element={<ConfiguracoesAvancadas />} />
+              <Route path="/teste-n8n" element={<TesteN8N />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
