@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,26 +26,51 @@ const Configuracoes = () => {
     openai: false
   });
   
+  // Carrega configurações previamente salvas (localStorage) como fallback
+  const savedSettingsRaw = typeof window !== 'undefined' ? localStorage.getItem('companySettings') : null;
+  const savedSettings = savedSettingsRaw ? JSON.parse(savedSettingsRaw) : null;
   const [settings, setSettings] = useState({
-    companyName: 'Adapt Link',
-    companyLogo: '',
-    primaryColor: '#3b82f6',
-    notifications: true,
-    autoResponse: true,
-    apiKeys: {
+    companyName: savedSettings?.companyName ?? 'Adapt Link',
+    companyLogo: savedSettings?.companyLogo ?? '',
+    primaryColor: savedSettings?.primaryColor ?? '#3b82f6',
+    notifications: savedSettings?.notifications ?? true,
+    autoResponse: savedSettings?.autoResponse ?? true,
+    apiKeys: savedSettings?.apiKeys ?? {
       whatsapp: 'whatsapp_key_hidden',
       instagram: 'instagram_key_hidden',
       openai: 'openai_key_hidden'
     }
   });
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const { toast } = useToast();
 
   const handleSave = () => {
+    try {
+      localStorage.setItem('companySettings', JSON.stringify(settings));
+    } catch (e) {
+      // ignore quota errors silenciosamente
+    }
     toast({
       title: "Configurações salvas!",
       description: "As alterações foram aplicadas com sucesso.",
     });
+  };
+
+  const handleLogoUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleLogoChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      setSettings(prev => ({ ...prev, companyLogo: dataUrl }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const toggleApiKeyVisibility = (key: keyof typeof showApiKeys) => {
@@ -103,15 +128,24 @@ const Configuracoes = () => {
                 <div className="flex items-center gap-4">
                   <div className="w-16 h-16 flex items-center justify-center">
                     <img 
-                      src={logoImage} 
-                      alt="Adapt Link Logo" 
+                      src={settings.companyLogo || logoImage} 
+                      alt="Logo da Empresa" 
                       className="w-16 h-16 object-contain"
                     />
                   </div>
-                  <Button variant="outline">
-                    <Upload className="w-4 h-4 mr-2" />
-                    Fazer Upload
-                  </Button>
+                  <div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png, image/jpeg"
+                      onChange={handleLogoChange}
+                      className="hidden"
+                    />
+                    <Button variant="outline" onClick={handleLogoUploadClick}>
+                      <Upload className="w-4 h-4 mr-2" />
+                      Fazer Upload
+                    </Button>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Recomendado: 200x200px, PNG ou JPG

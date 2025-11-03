@@ -12,6 +12,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useEffect, useState } from 'react';
 import logoImage from '../../assets/Adapt-Link-Logo.png';
 
 interface NavbarProps {
@@ -24,6 +25,22 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
   const location = useLocation();
   const { toast } = useToast();
   const isMobile = useIsMobile();
+
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string>('Adapt Link');
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('companySettings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.companyLogo) setCompanyLogo(parsed.companyLogo as string);
+        if (parsed?.companyName) setCompanyName(parsed.companyName as string);
+      }
+    } catch (_) {
+      // ignore
+    }
+  }, []);
 
   const handleLogout = () => {
     // Simular logout
@@ -79,13 +96,18 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
           </Button>
         )}
 
-        {/* Logo e Título - Responsivo */}
+        {/* Logo e Título - Responsivo */
+        }
         <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <div className="flex items-baseline">
-              <span className="text-white font-bold text-lg sm:text-xl tracking-tight">adapt</span>
-              <span className="text-white/70 text-lg sm:text-xl font-light tracking-tight">link</span>
-            </div>
+            {companyLogo ? (
+              <img src={companyLogo} alt={companyName} className="h-6 sm:h-7 object-contain" />
+            ) : (
+              <div className="flex items-baseline">
+                <span className="text-white font-bold text-lg sm:text-xl tracking-tight">adapt</span>
+                <span className="text-white/70 text-lg sm:text-xl font-light tracking-tight">link</span>
+              </div>
+            )}
           </div>
           
           <div className="h-6 w-px bg-white/30 hidden sm:block"></div>
