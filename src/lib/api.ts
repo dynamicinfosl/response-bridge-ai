@@ -27,7 +27,31 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
       throw new Error(`API Error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    // Verificar se há conteúdo antes de fazer parse
+    const contentType = response.headers.get('content-type');
+    const text = await response.text();
+    
+    console.log('📡 Response text (raw):', text.substring(0, 200)); // Log dos primeiros 200 caracteres
+    
+    // Se a resposta estiver vazia, retornar array vazio para chats/messages
+    if (!text || text.trim() === '') {
+      console.warn('⚠️ Resposta vazia do servidor, retornando array vazio');
+      return [] as T;
+    }
+
+    // Tentar fazer parse do JSON
+    let data: T;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.error('❌ Erro ao fazer parse do JSON:', parseError);
+      console.error('📄 Texto recebido:', text);
+      // Se for endpoint de chats ou messages, retornar array vazio
+      if (endpoint.includes('chats') || endpoint.includes('messages')) {
+        return [] as T;
+      }
+      throw new Error(`Invalid JSON response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+    }
     
     // Debug: Log da resposta da API
     console.log('📡 API Response:', { endpoint, data, isArray: Array.isArray(data), type: typeof data });
@@ -111,14 +135,28 @@ export const chatsAPI = {
 };
 
 export const messagesAPI = {
-  getByChatId: (chatId: string) =>
-    fetchAPI<Message[]>(`?endpoint=messages&chatId=${chatId}`),
+  getByChatId: (chatId: string) => {
+    // Adicionar timestamp para evitar cache do navegador
+    const timestamp = Date.now();
+    return fetchAPI<Message[]>(`?endpoint=messages&chatId=${chatId}&t=${timestamp}`);
+  },
   
-  send: (data: SendMessagePayload) =>
-    fetchAPI<Message>('/messages', {
+  send: (data: SendMessagePayload) => {
+    // Extrair apenas o número do telefone (remover @s.whatsapp.net se existir)
+    const cleanChatId = data.chatId.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    
+    // Criar payload conforme esperado pelo n8n
+    const payload = {
+      chatId: cleanChatId, // Apenas o número, sem @s.whatsapp.net
+      content: data.content,
+      sender: data.sender
+    };
+    
+    return fetchAPI<Message>('/send-message', {
       method: 'POST',
-      body: JSON.stringify(data),
-    }),
+      body: JSON.stringify(payload),
+    });
+  },
   
   markAsRead: (chatId: string) =>
     fetchAPI<void>(`/messages/${chatId}/read`, {

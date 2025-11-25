@@ -10,6 +10,9 @@ export function useChats() {
     gcTime: 0, // Não usa cache do garbage collector
     refetchOnMount: true, // Sempre refaz a busca ao montar
     refetchOnWindowFocus: true, // Refaz ao focar a janela
+    retry: 1, // Tenta apenas 1 vez em caso de erro
+    retryOnMount: false, // Não tenta novamente ao montar se já falhou
+    keepPreviousData: true, // Mantém os dados anteriores em caso de erro
   });
 }
 
@@ -18,7 +21,13 @@ export function useMessages(chatId: string | null) {
     queryKey: ['messages', chatId],
     queryFn: () => chatId ? messagesAPI.getByChatId(chatId) : Promise.resolve([]),
     enabled: !!chatId,
-    refetchInterval: 3000, // Atualiza a cada 3 segundos
+    refetchInterval: 2000, // Atualiza a cada 2 segundos (mais frequente)
+    staleTime: 0, // Dados sempre considerados stale (obsoletos)
+    gcTime: 0, // Não usa cache do garbage collector
+    refetchOnMount: true, // Sempre refaz a busca ao montar
+    refetchOnWindowFocus: true, // Refaz ao focar a janela
+    retry: 1, // Tenta apenas 1 vez em caso de erro
+    keepPreviousData: false, // NÃO manter dados anteriores - sempre buscar novos
   });
 }
 
@@ -28,8 +37,13 @@ export function useSendMessage() {
   return useMutation({
     mutationFn: (data: SendMessagePayload) => messagesAPI.send(data),
     onSuccess: (_, variables) => {
+      // Invalida queries para atualizar mensagens e chats
       queryClient.invalidateQueries({ queryKey: ['messages', variables.chatId] });
       queryClient.invalidateQueries({ queryKey: ['chats'] });
+    },
+    onError: (error) => {
+      console.error('❌ Erro ao enviar mensagem:', error);
+      // O erro será capturado pelo componente que usa este hook
     },
   });
 }

@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useChats, useMessages, useSendMessage } from '@/hooks/useChats';
 import { Loader2 } from 'lucide-react';
+// import { useClientNames } from '@/hooks/useClientNames';
 
 const Atendimentos = () => {
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
@@ -50,13 +51,43 @@ const Atendimentos = () => {
   // Garantir que chats é sempre um array e normalizar os dados
   // O n8n pode retornar um objeto único ou um array
   const chats = (() => {
-    if (!chatsData) return [];
+    console.log('🔍 Iniciando normalização de chats. chatsData:', chatsData);
+    
+    if (!chatsData) {
+      console.log('⚠️ chatsData é null/undefined');
+      return [];
+    }
     
     let rawChats: any[] = [];
     
     // Se já é um array, usa direto
     if (Array.isArray(chatsData)) {
+      console.log('📦 chatsData é array com', chatsData.length, 'itens');
       rawChats = chatsData;
+      // Filtrar objetos que claramente não são chats (ex: {success: true})
+      rawChats = rawChats.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        
+        // Se tem 'json' dentro, é um chat válido (formato do n8n)
+        if ('json' in item && typeof item.json === 'object') {
+          return true;
+        }
+        
+        // Se tem apenas 'success' ou 'pairedItem' (sem json), não é um chat
+        const keys = Object.keys(item);
+        if (keys.length <= 2 && (keys.includes('success') || keys.includes('pairedItem'))) {
+          console.log('🚫 Filtrando item não-chat:', item);
+          return false;
+        }
+        
+        // Se tem id, chatid, pushName, etc, é um chat válido
+        if ('id' in item || 'chatid' in item || 'pushName' in item || 'pushname' in item) {
+          return true;
+        }
+        
+        return true;
+      });
+      console.log('📦 Após filtrar não-chats:', rawChats.length, 'itens');
     }
     // Se é um objeto, verifica se tem propriedade 'messages' (quando vem do json_agg)
     else if (typeof chatsData === 'object' && chatsData !== null) {
@@ -82,41 +113,218 @@ const Atendimentos = () => {
         }
       }
       
-      // Se não encontrou nada, transforma o objeto em array
-      if (rawChats.length === 0) {
-        rawChats = [chatsData];
+      // Se não encontrou nada, não cria chat fantasma - retorna array vazio
+      // (removido: não criar chat a partir de objeto vazio)
+    }
+    
+    // Extrair dados de dentro de objetos {json: {...}} se existir (formato do n8n)
+    console.log('🔄 Extraindo json de', rawChats.length, 'itens');
+    rawChats = rawChats.map((item, idx) => {
+      // Se o item tem uma propriedade 'json' e é um objeto, extrai o json
+      if (item && typeof item === 'object' && 'json' in item && typeof item.json === 'object') {
+        console.log(`✅ Item ${idx}: extraindo json`, item.json);
+        return item.json;
+      }
+      console.log(`📄 Item ${idx}: usando direto`, item);
+      return item;
+    });
+    console.log('🔄 Após extrair json:', rawChats.length, 'itens');
+    
+    // Normalizar os dados e filtrar chats inválidos
+    const normalizedChats = rawChats
+      .map(chat => {
+        // Tratar pushName: remover \n e converter string "null" para null real
+        let pushName = chat.pushName || chat.pushname || null;
+        if (typeof pushName === 'string') {
+          pushName = pushName.trim().replace(/\n/g, '');
+          if (pushName === '' || pushName === 'null' || pushName === 'undefined') {
+            pushName = null;
+          }
+        }
+        
+        // Preservar id original (pode ser string ou número)
+        const chatId = chat.id?.toString() || chat.chatid?.toString() || null;
+        const phone = chat.phone?.toString() || chat.id?.toString() || chat.chatid?.toString() || null;
+        
+        const normalized = {
+          ...chat,
+          id: chatId,
+          phone: phone,
+          pushName: pushName,
+          lastMessage: chat.lastMessage || chat.lastmessage || null,
+          clientPhone: chat.clientPhone || chat.clientphone || chatId || phone || null,
+        };
+        
+        return normalized;
+      })
+      .filter(chat => {
+        // Filtrar chats inválidos: deve ter id válido (não null, não vazio, não só espaços)
+        const validId = chat.id && 
+                       typeof chat.id === 'string' && 
+                       chat.id.trim() !== '' && 
+                       chat.id !== 'null' && 
+                       chat.id !== 'undefined' &&
+                       chat.id.length >= 5; // Deve ter pelo menos 5 caracteres (número de telefone mínimo)
+        
+        // Ignorar objetos que são apenas respostas de sucesso (ex: {success: true})
+        const isSuccessResponse = chat.success === true && !chat.id && !chat.chatid;
+        
+        const isValid = validId && !isSuccessResponse;
+        
+        if (!isValid && chat.id) {
+          console.warn('Chat filtrado (inválido):', { id: chat.id, phone: chat.phone, pushName: chat.pushName });
+        }
+        
+        return isValid;
+      });
+    
+    // Debug: Log dos chats normalizados
+    if (normalizedChats.length > 0) {
+      console.log('✅ Chats normalizados:', normalizedChats.length, normalizedChats);
+    } else if (rawChats.length > 0) {
+      console.warn('⚠️ Chats foram filtrados! Raw chats:', rawChats);
+    }
+    
+    return normalizedChats;
+  })();
+
+  // Garantir que messages é sempre um array também e normalizar
+  const messages = (() => {
+    console.log('🔍 Iniciando normalização de mensagens. messagesData:', messagesData);
+    
+    if (!messagesData) {
+      console.log('⚠️ messagesData é null/undefined');
+      return [];
+    }
+    
+    let rawMessages: any[] = [];
+    
+    // Se já é um array, usa direto
+    if (Array.isArray(messagesData)) {
+      console.log('📦 messagesData é array com', messagesData.length, 'itens');
+      rawMessages = messagesData;
+    } else if (messagesData) {
+      console.log('📦 messagesData é objeto, convertendo para array');
+      rawMessages = [messagesData];
+    }
+    
+    // Extrair dados de dentro de objetos {json: {...}} se existir (formato do n8n)
+    console.log('🔄 Extraindo json de', rawMessages.length, 'mensagens');
+    rawMessages = rawMessages.map((item, idx) => {
+      // Se o item tem uma propriedade 'json' e é um objeto, extrai o json
+      if (item && typeof item === 'object' && 'json' in item && typeof item.json === 'object') {
+        console.log(`✅ Mensagem ${idx}: extraindo json`, item.json);
+        return item.json;
+      }
+      console.log(`📄 Mensagem ${idx}: usando direto`, item);
+      return item;
+    });
+    console.log('🔄 Após extrair json:', rawMessages.length, 'mensagens');
+    
+    // Normalizar e ordenar mensagens
+    const normalizedMessages = rawMessages
+      .map((msg, idx) => {
+        console.log(`📝 Normalizando mensagem ${idx}:`, msg);
+        // Preservar timestamp original (prioridade: timestamp > time > createdat)
+        let timestamp = msg.timestamp || msg.time || msg.createdat;
+        
+        // Se timestamp não tem timezone, adiciona 'Z' para indicar UTC
+        if (timestamp && typeof timestamp === 'string' && !timestamp.includes('Z') && !timestamp.match(/[+-]\d{2}:\d{2}$/)) {
+          // Se é formato ISO sem timezone, adiciona Z
+          if (timestamp.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+            timestamp = timestamp + 'Z';
+          }
+        }
+        
+        return {
+          id: msg.id?.toString() || `msg_${Date.now()}_${Math.random()}`,
+          chatId: msg.chatId || msg.chatid || selectedChat || '',
+          content: msg.content || '',
+          sender: msg.sender === 'client' ? 'user' : (msg.sender === 'agent' || msg.sender === 'ai' ? 'agent' : (msg.sender === 'user' ? 'user' : 'user')),
+          timestamp: timestamp || new Date().toISOString(),
+          read: msg.read || false,
+        };
+      })
+      .filter(msg => {
+        const isValid = msg.content && msg.chatId;
+        if (!isValid) {
+          console.warn('🚫 Mensagem filtrada (inválida):', msg);
+        }
+        return isValid;
+      })
+      .sort((a, b) => {
+        // Ordena por timestamp (mais antigas primeiro)
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        if (isNaN(timeA) || isNaN(timeB)) return 0; // Mantém ordem original se timestamp inválido
+        return timeA - timeB;
+      });
+    
+    console.log('✅ Mensagens normalizadas:', normalizedMessages.length, normalizedMessages);
+    console.log('📊 Por sender:', {
+      user: normalizedMessages.filter(m => m.sender === 'user').length,
+      agent: normalizedMessages.filter(m => m.sender === 'agent').length,
+    });
+    
+    return normalizedMessages;
+  })();
+
+  // Preservar nomes no localStorage (temporário até Supabase funcionar)
+  const preservedNames = JSON.parse(localStorage.getItem('preservedChatNames') || '{}');
+
+  // Função para salvar nome no localStorage
+  const saveNameToStorage = (chatId: string, name: string) => {
+    const cleanChatId = chatId.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const invalidNames = ['agente de ia', 'agente', 'ia', 'bot', 'assistente', 'sistema', 'lucas'];
+    
+    if (name && name.length >= 2 && !invalidNames.some(invalid => name.toLowerCase().includes(invalid))) {
+      const updated = { ...preservedNames, [cleanChatId]: name };
+      localStorage.setItem('preservedChatNames', JSON.stringify(updated));
+      console.log('💾 Nome salvo no localStorage:', { chatId: cleanChatId, name });
+    }
+  };
+
+  // Função para buscar nome no localStorage
+  const getNameFromStorage = (chatId: string): string | null => {
+    const cleanChatId = chatId.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    return preservedNames[cleanChatId] || null;
+  };
+
+  // Helper para formatar nome do cliente
+  const formatClientName = (chat: any) => {
+    const chatId = chat.id || chat.chatid || chat.phone || '';
+    
+    // PRIORIDADE 1: Nome salvo no localStorage
+    const savedName = getNameFromStorage(chatId);
+    if (savedName) {
+      return savedName;
+    }
+    
+    // PRIORIDADE 2: pushName (nome do WhatsApp) - salvar se for válido
+    let pushName = chat.pushName || chat.pushname || null;
+    if (typeof pushName === 'string') {
+      pushName = pushName.trim().replace(/\n/g, '');
+      if (pushName && pushName !== '' && pushName !== 'null' && pushName !== 'undefined') {
+        const lowerPushName = pushName.toLowerCase();
+        const invalidNames = ['agente de ia', 'agente', 'ia', 'bot', 'assistente', 'sistema', 'lucas'];
+        if (!invalidNames.some(invalid => lowerPushName.includes(invalid))) {
+          saveNameToStorage(chatId, pushName);
+          return pushName;
+        }
       }
     }
     
-    // Normalizar os dados: garantir que pushName, lastMessage sempre existam (mesmo que vazios)
-    return rawChats.map(chat => ({
-      ...chat,
-      pushName: chat.pushName || chat.pushname || null,
-      lastMessage: chat.lastMessage || chat.lastmessage || null,
-      clientPhone: chat.clientPhone || chat.clientphone || chat.id,
-    }));
-  })();
-
-  // Garantir que messages é sempre um array também
-  const messages = Array.isArray(messagesData) 
-    ? messagesData 
-    : messagesData 
-      ? [messagesData] // Se for um objeto, transforma em array
-      : [];
-
-  // Helper para formatar nome do cliente (prioridade: pushName > client > número formatado)
-  const formatClientName = (chat: any) => {
-    // Prioridade 1: pushName normalizado (já foi normalizado no processamento do array)
-    if (chat.pushName && chat.pushName.trim() !== '') {
-      return chat.pushName;
-    }
-    
-    // Prioridade 2: Nome fornecido manualmente (client deve ser nome, não telefone)
+    // PRIORIDADE 3: Nome fornecido manualmente (client)
     if (chat.client && chat.client.trim() !== '' && !chat.client.includes('@')) {
-      return chat.client;
+      const lowerClient = chat.client.toLowerCase();
+      const invalidNames = ['agente de ia', 'agente', 'ia', 'bot', 'assistente', 'sistema', 'lucas'];
+      if (!invalidNames.some(invalid => lowerClient.includes(invalid))) {
+        saveNameToStorage(chatId, chat.client.trim());
+        return chat.client.trim();
+      }
     }
     
-    // Prioridade 3: Formatar número do WhatsApp
+    // PRIORIDADE 4: Formatar número do WhatsApp (fallback)
     if (chat.phone || chat.id) {
       const phone = chat.phone || chat.id || '';
       const number = phone.replace('@s.whatsapp.net', '').replace('@c.us', '');
@@ -522,16 +730,23 @@ const Atendimentos = () => {
                       </div>
                     ) : (
                       messages.map((message, index) => {
-                        const isClient = message.sender === 'client';
+                        // Corrigir: sender pode ser 'user' (cliente) ou 'agent' (agente)
+                        const isClient = message.sender === 'user' || message.sender === 'client';
                         const isAgent = message.sender === 'agent' || message.sender === 'ai';
                         
                         // Verifica se é o mesmo remetente da mensagem anterior (para agrupar)
                         const prevMessage = index > 0 ? messages[index - 1] : null;
-                        const isSameSender = prevMessage && prevMessage.sender === message.sender;
+                        const isSameSender = prevMessage && (
+                          (prevMessage.sender === message.sender) ||
+                          ((prevMessage.sender === 'user' || prevMessage.sender === 'client') && 
+                           (message.sender === 'user' || message.sender === 'client')) ||
+                          ((prevMessage.sender === 'agent' || prevMessage.sender === 'ai') && 
+                           (message.sender === 'agent' || message.sender === 'ai'))
+                        );
                         
                         // Formata horário (HH:MM) - corrige timezone
                         const getMessageTime = () => {
-                          const timestamp = message.timestamp || message.time;
+                          const timestamp = message.timestamp || message.time || message.createdat;
                           if (!timestamp) return '';
                           
                           try {
@@ -539,18 +754,27 @@ const Atendimentos = () => {
                             
                             // Se o timestamp não tem 'Z' ou timezone, assume UTC e converte para local
                             if (typeof timestamp === 'string') {
-                              // Se já tem timezone info, usa direto
-                              if (timestamp.includes('Z') || timestamp.includes('+') || timestamp.includes('-', 10)) {
-                                date = new Date(timestamp);
+                              // Remove espaços e caracteres extras
+                              const cleanTimestamp = timestamp.trim();
+                              
+                              // Se já tem timezone info (Z, +, ou - após a data), usa direto
+                              if (cleanTimestamp.includes('Z') || cleanTimestamp.match(/[+-]\d{2}:\d{2}$/)) {
+                                date = new Date(cleanTimestamp);
+                              } else if (cleanTimestamp.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+                                // Formato ISO sem timezone - assume UTC
+                                date = new Date(cleanTimestamp + 'Z');
                               } else {
-                                // Se não tem timezone, assume UTC (Postgres retorna em UTC)
-                                date = new Date(timestamp + 'Z');
+                                // Tenta parse direto
+                                date = new Date(cleanTimestamp);
                               }
                             } else {
                               date = new Date(timestamp);
                             }
                             
-                            if (isNaN(date.getTime())) return '';
+                            if (isNaN(date.getTime())) {
+                              console.warn('Timestamp inválido:', timestamp);
+                              return '';
+                            }
                             
                             // Obtém horas e minutos no timezone local do navegador
                             const hours = String(date.getHours()).padStart(2, '0');
@@ -618,7 +842,7 @@ const Atendimentos = () => {
                                   isClient ? "justify-start" : "justify-end"
                                 )}>
                                   <span className="text-[11px] text-[#667781]">
-                                    {messageTime || formatTimeAgo(message.timestamp || message.time || '')}
+                                    {messageTime || '--:--'}
                                   </span>
                                   {!isClient && (
                                     <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />

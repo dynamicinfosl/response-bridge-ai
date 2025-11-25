@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,37 +7,65 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Lock, Mail } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import logoImage from '../assets/Adapt-Link-Logo.png';
 
 const Login = () => {
-  const [email, setEmail] = useState('admin@adaptlink.com');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { signIn, user, loading } = useAuth();
+
+  // Redirecionar se já estiver logado
+  useEffect(() => {
+    if (!loading && user) {
+      navigate('/dashboard');
+    }
+  }, [user, loading, navigate]);
+
+  // Carregar credenciais salvas se "Lembrar-me" estava ativado
+  useEffect(() => {
+    const savedEmail = localStorage.getItem('rememberedEmail');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!email || !password) {
+      toast({
+        title: "Erro no login",
+        description: "Por favor, preencha todos os campos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
-    // Mock login - simulate API call
-    setTimeout(() => {
-      if (email && password) {
-        toast({
-          title: "Login realizado com sucesso!",
-          description: "Redirecionando para o dashboard...",
-        });
-        navigate('/dashboard');
-      } else {
-        toast({
-          title: "Erro no login",
-          description: "Verifique suas credenciais e tente novamente.",
-          variant: "destructive",
-        });
-      }
-      setIsLoading(false);
-    }, 1000);
+    if (rememberMe) {
+      localStorage.setItem('rememberedEmail', email);
+    } else {
+      localStorage.removeItem('rememberedEmail');
+    }
+
+    const { error } = await signIn(email, password);
+    
+    setIsLoading(false);
+
+    if (error) {
+      toast({
+        title: "Erro no login",
+        description: error.message || "Credenciais inválidas.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -122,8 +150,7 @@ const Login = () => {
               </div>
 
                            <div className="text-center text-xs text-muted-foreground pt-3">
-               <p>Credenciais de demo:</p>
-               <p>admin@adaptlink.com / 123456</p>
+               <p>Use suas credenciais do Supabase para fazer login</p>
              </div>
           </form>
         </CardContent>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   MessageSquare, 
@@ -16,8 +16,10 @@ import {
   LogOut
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useAuth } from '@/contexts/AuthContext';
 import logoImage from '../../assets/Adapt-Link-Logo.png';
 
 const menuItems = [
@@ -73,6 +75,65 @@ interface SidebarProps {
 export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose }: SidebarProps) => {
   const location = useLocation();
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  
+  // useAuth deve estar sempre disponível pois Sidebar está dentro do AuthProvider via Layout
+  const { user, signOut } = useAuth();
+
+  // Função para obter iniciais do nome do usuário
+  const getInitials = (name?: string, email?: string) => {
+    if (name) {
+      const parts = name.trim().split(' ');
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      }
+      return name.substring(0, 2).toUpperCase();
+    }
+    if (email) {
+      return email.substring(0, 2).toUpperCase();
+    }
+    return '??';
+  };
+
+  // Função para obter nome de exibição
+  const getDisplayName = () => {
+    if (user?.name) {
+      return user.name;
+    }
+    if (user?.email) {
+      return user.email.split('@')[0];
+    }
+    return 'Usuário';
+  };
+
+  // Função para obter role de exibição
+  const getDisplayRole = () => {
+    if (user?.role) {
+      const roleMap: Record<string, string> = {
+        'admin': 'Administrador',
+        'user': 'Usuário',
+        'operator': 'Operador',
+        'manager': 'Gerente',
+      };
+      return roleMap[user.role] || user.role;
+    }
+    return 'Usuário';
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (signOut) {
+        await signOut();
+      } else {
+        // Se não houver signOut, apenas navegar
+        navigate('/login');
+      }
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      // Se falhar, redirecionar para login
+      navigate('/login');
+    }
+  };
 
   // Mobile overlay
   const MobileOverlay = () => (
@@ -135,9 +196,9 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4">
+      <nav className="flex-1 px-3 py-4 overflow-y-auto">
         <ul className="space-y-3">
-          {menuItems.slice(0, -1).map((item) => {
+          {menuItems.filter(item => item.href !== '/login').map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.href;
             
@@ -165,42 +226,100 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
         </ul>
       </nav>
 
-      {/* Sair Button */}
-      <div className="p-3 border-t border-border">
-        <NavLink
-          to="/login"
-          onClick={isMobile ? onMobileClose : undefined}
-          className={cn(
-            "flex items-center px-3 py-4 text-sm font-medium rounded-lg transition-all duration-200",
-            "hover:bg-destructive/10 hover:text-destructive",
-            collapsed && !isMobile && "justify-center px-2"
+      {/* User Profile Card - Fixo no final */}
+      {user && (
+        <div className="mt-auto border-t border-border bg-card">
+          {(!collapsed || isMobile) ? (
+            // Versão expandida
+            <div className="p-3">
+              <div className="bg-background rounded-lg border border-border p-3 space-y-3">
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10 border-2 border-primary/20">
+                    <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name || user.email} className="w-full h-full rounded-full" />
+                      ) : (
+                        getInitials(user.name, user.email)
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">
+                      {getDisplayName()}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {getDisplayRole()}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground truncate px-1">
+                    {user.email}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        navigate('/configuracoes');
+                        if (isMobile) onMobileClose?.();
+                      }}
+                      className="flex-1 h-8 text-xs"
+                    >
+                      <Settings className="h-3 w-3 mr-2" />
+                      Config
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleLogout}
+                      className="flex-1 h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                    >
+                      <LogOut className="h-3 w-3 mr-2" />
+                      Sair
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              {!isMobile && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onToggle}
+                  className="w-full justify-center h-8 text-xs text-muted-foreground hover:text-foreground mt-2"
+                >
+                  <ChevronLeft className="h-4 w-4 mr-2" />
+                  Recolher
+                </Button>
+              )}
+            </div>
+          ) : (
+            // Versão colapsada - só avatar e toggle
+            <div className="p-2 space-y-2">
+              <div className="flex justify-center">
+                <Avatar className="h-10 w-10 border-2 border-primary/20 cursor-pointer hover:border-primary/40 transition-colors">
+                  <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt={user.name || user.email} className="w-full h-full rounded-full" />
+                    ) : (
+                      getInitials(user.name, user.email)
+                    )}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggle}
+                className="w-full justify-center h-8"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           )}
-        >
-          <LogOut className={cn(
-            "h-5 w-5",
-            (!collapsed || isMobile) && "mr-3"
-          )} />
-          {(!collapsed || isMobile) && <span>Sair</span>}
-        </NavLink>
-      </div>
-
-      {/* Toggle Button - Only on desktop */}
-      {!isMobile && (
-        <div className="p-2 border-t border-border">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onToggle}
-            className="w-full justify-center h-8"
-          >
-            {collapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-          </Button>
         </div>
       )}
+
     </div>
     </>
   );

@@ -167,7 +167,7 @@ VITE_AI_MODEL=gpt-4
 # Configurações de Integração
 VITE_WHATSAPP_API_URL=https://api.whatsapp.com
 VITE_INSTAGRAM_API_URL=https://graph.facebook.com
-VITE_EMAIL_SERVICE_API=sendgrid_api_key
+VITE_EMAIL_SERVICE_API=sendgrid_api_ke
 
 # Configurações de Segurança
 VITE_JWT_SECRET=seu_jwt_secret

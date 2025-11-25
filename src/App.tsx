@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Suspense, Component, ReactNode } from "react";
+import { AuthProvider } from "./contexts/AuthContext";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Atendimentos from "./pages/Atendimentos";
@@ -16,6 +17,7 @@ import Relatorios from "./pages/Relatorios";
 import ConfiguracaoIA from "./pages/ConfiguracaoIA";
 import TesteN8N from "./pages/TesteN8N";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -74,30 +76,32 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Suspense fallback={<Loading />}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/login" replace />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/atendimentos" element={<Atendimentos />} />
-              <Route path="/colaboradores" element={<Colaboradores />} />
-              <Route path="/ligacoes-ia" element={<LigacoesIA />} />
-              <Route path="/ordem-servico" element={<OrdemServico />} />
-              <Route path="/relatorios" element={<Relatorios />} />
-              <Route path="/configuracao-ia" element={<ConfiguracaoIA />} />
-              <Route path="/configuracoes" element={<Configuracoes />} />
-              <Route path="/configuracoes-avancadas" element={<ConfiguracoesAvancadas />} />
-              <Route path="/teste-n8n" element={<TesteN8N />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </TooltipProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route path="/" element={<Navigate to="/login" replace />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                <Route path="/atendimentos" element={<ProtectedRoute><Atendimentos /></ProtectedRoute>} />
+                <Route path="/colaboradores" element={<ProtectedRoute><Colaboradores /></ProtectedRoute>} />
+                <Route path="/ligacoes-ia" element={<ProtectedRoute><LigacoesIA /></ProtectedRoute>} />
+                <Route path="/ordem-servico" element={<ProtectedRoute><OrdemServico /></ProtectedRoute>} />
+                <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
+                <Route path="/configuracao-ia" element={<ProtectedRoute><ConfiguracaoIA /></ProtectedRoute>} />
+                <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
+                <Route path="/configuracoes-avancadas" element={<ProtectedRoute><ConfiguracoesAvancadas /></ProtectedRoute>} />
+                <Route path="/teste-n8n" element={<ProtectedRoute><TesteN8N /></ProtectedRoute>} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </TooltipProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   </ErrorBoundary>
 );

@@ -47,9 +47,14 @@ const Configuracoes = () => {
   const { toast } = useToast();
 
   const handleSave = () => {
+    console.log('[Configurações] Salvando configurações...', settings);
     try {
       localStorage.setItem('companySettings', JSON.stringify(settings));
+      console.log('[Configurações] companySettings gravado no localStorage');
+      // Notificar outros componentes na mesma aba
+      window.dispatchEvent(new CustomEvent('companySettingsUpdated'));
     } catch (e) {
+      console.error('[Configurações] Erro ao salvar no localStorage', e);
       // ignore quota errors silenciosamente
     }
     toast({
@@ -59,16 +64,19 @@ const Configuracoes = () => {
   };
 
   const handleLogoUploadClick = () => {
+    console.log('[Configurações] Clique em Fazer Upload');
     fileInputRef.current?.click();
   };
 
   const handleLogoChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    console.log('[Configurações] Arquivo selecionado:', { name: file.name, size: file.size, type: file.type });
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = typeof reader.result === 'string' ? reader.result : '';
       setSettings(prev => ({ ...prev, companyLogo: dataUrl }));
+      console.log('[Configurações] Logo carregada em memória (dataURL)');
     };
     reader.readAsDataURL(file);
   };
@@ -91,7 +99,7 @@ const Configuracoes = () => {
               Personalize sua experiência e integrações
             </p>
           </div>
-          <Button onClick={handleSave} className="bg-gradient-primary hover:shadow-primary">
+          <Button type="button" onClick={handleSave} className="bg-gradient-primary hover:shadow-primary">
             <Save className="w-4 h-4 mr-2" />
             Salvar Alterações
           </Button>
@@ -141,7 +149,7 @@ const Configuracoes = () => {
                       onChange={handleLogoChange}
                       className="hidden"
                     />
-                    <Button variant="outline" onClick={handleLogoUploadClick}>
+                    <Button type="button" variant="outline" onClick={handleLogoUploadClick}>
                       <Upload className="w-4 h-4 mr-2" />
                       Fazer Upload
                     </Button>
