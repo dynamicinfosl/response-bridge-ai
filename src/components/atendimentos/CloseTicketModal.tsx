@@ -9,20 +9,24 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { 
-  CheckCircle2, 
-  Clock, 
-  MessageSquare, 
-  Bot, 
+import {
+  CheckCircle2,
+  Clock,
+  MessageSquare,
+  Bot,
   User,
-  Star
+  Star,
+  Loader2
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useCloseChat } from '@/hooks/useChats';
+import { chatwootAPI } from '@/lib/chatwoot';
 
 interface CloseTicketModalProps {
   isOpen: boolean;
   onClose: () => void;
   clientName: string;
+  chatId: string;
   ticketData: {
     startTime: string;
     totalMessages: number;
@@ -32,44 +36,43 @@ interface CloseTicketModalProps {
   };
 }
 
-export const CloseTicketModal = ({ isOpen, onClose, clientName, ticketData }: CloseTicketModalProps) => {
+export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketData }: CloseTicketModalProps) => {
   const [summary, setSummary] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const { toast } = useToast();
+  const closeChatMutation = useCloseChat();
 
-  // Auto-generate summary based on ticket data
-  const generateSummary = () => {
-    setIsGenerating(true);
-    
-    // Mock AI summary generation
-    setTimeout(() => {
-      const autoSummary = `Atendimento iniciado às ${ticketData.startTime} via ${ticketData.channel}. 
-Cliente ${clientName} teve sua solicitação resolvida com ${ticketData.totalMessages} mensagens trocadas. 
-A IA respondeu ${ticketData.aiMessages} mensagens e o atendente humano ${ticketData.humanMessages}. 
-Problema resolvido com sucesso e cliente demonstrou satisfação.`;
-      
-      setSummary(autoSummary);
-      setIsGenerating(false);
-    }, 2000);
-  };
+// ...
 
-  const handleClose = () => {
-    if (!summary.trim()) {
+  const handleClose = async () => {
+    setIsClosing(true);
+    try {
+      // 1. Enviar o resumo como uma nota privada no Chatwoot (apenas se preenchido)
+      if (summary.trim()) {
+        await chatwootAPI.sendMessage(Number(chatId), `Resumo Manual:\n${summary}`, true);
+      }
+
+      // 2. Mudar status para resolvido
+      await closeChatMutation.mutateAsync({ id: chatId });
+
       toast({
-        title: "Resumo obrigatório",
-        description: "Por favor, adicione um resumo antes de encerrar o atendimento.",
-        variant: "destructive",
+        title: "Atendimento encerrado!",
+        description: `Conversa com ${clientName} foi finalizada com sucesso.`,
       });
-      return;
-    }
 
-    toast({
-      title: "Atendimento encerrado!",
-      description: `Conversa com ${clientName} foi finalizada com sucesso.`,
-    });
-    
-    setSummary('');
-    onClose();
+      setSummary('');
+      onClose();
+    } catch (error) {
+      console.error('Erro ao fechar atendimento:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível encerrar o atendimento no sistema.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsClosing(false);
+    }
   };
 
   const duration = new Date().getTime() - new Date(`2024-01-15 ${ticketData.startTime}`).getTime();
@@ -87,12 +90,12 @@ Problema resolvido com sucesso e cliente demonstrou satisfação.`;
             Finalizando conversa com <strong>{clientName}</strong>
           </p>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           {/* Ticket Stats */}
           <div className="bg-muted/30 p-4 rounded-lg space-y-3">
             <h4 className="text-sm font-medium">Resumo do Atendimento:</h4>
-            
+
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-muted-foreground" />
@@ -111,7 +114,7 @@ Problema resolvido com sucesso e cliente demonstrou satisfação.`;
                 <span>Humano: {ticketData.humanMessages} respostas</span>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
                 Canal: {ticketData.channel}
@@ -126,18 +129,10 @@ Problema resolvido com sucesso e cliente demonstrou satisfação.`;
           {/* Summary */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Resumo do Atendimento:</label>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={generateSummary}
-                disabled={isGenerating}
-              >
-                {isGenerating ? "Gerando..." : "Gerar com IA"}
-              </Button>
+              <label className="text-sm font-medium">Resumo do Atendimento (Opcional):</label>
             </div>
             <Textarea
-              placeholder="Descreva como o problema foi resolvido e principais pontos da conversa..."
+              placeholder="Opcional: Descreva como o problema foi resolvido. Deixe em branco para a IA gerar automaticamente pelo fluxo normal..."
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               className="min-h-24"
@@ -161,11 +156,12 @@ Problema resolvido com sucesso e cliente demonstrou satisfação.`;
           <Button variant="outline" onClick={onClose}>
             Cancelar
           </Button>
-          <Button 
+          <Button
             onClick={handleClose}
-            className="bg-gradient-primary hover:shadow-primary"
+            disabled={isClosing}
+            className="bg-gradient-primary hover:shadow-primary text-white"
           >
-            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {isClosing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
             Finalizar Atendimento
           </Button>
         </DialogFooter>

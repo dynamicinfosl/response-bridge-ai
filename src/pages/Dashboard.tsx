@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useAtendimentosEncerrados } from '@/hooks/useAtendimentosEncerrados';
+import { useChats } from '@/hooks/useChats';
 import { Layout } from '@/components/layout/Layout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { MetricsCard } from '@/components/dashboard/MetricsCard';
@@ -27,6 +29,36 @@ const Dashboard = () => {
   const [channelChartPeriod, setChannelChartPeriod] = useState('semanal');
   const [efficiencyChartPeriod, setEfficiencyChartPeriod] = useState('30');
 
+  const { data: encerrados = [], isLoading: loadingEncerrados } = useAtendimentosEncerrados();
+  const { data: chats = [], isLoading: loadingChats } = useChats();
+
+  const metrics = useMemo(() => {
+    // Pendentes = Apenas chats que não estão concluídos e possuem a etiqueta 'precisa_atendimento'
+    const pendingChats = chats.filter((chat: any) => 
+      chat.status !== 'concluido' && 
+      chat.status !== 'resolved' && 
+      chat.labels?.includes('precisa_atendimento')
+    ).length;
+    const totalEncerrados = encerrados.length;
+    const resolutionRate = totalEncerrados > 0 ? 100 : 0; 
+    
+    const iaCount = encerrados.filter((e: any) => e.resolvido_por?.toLowerCase() === 'ia').length;
+    
+    // Tempo Médio de Resposta (Média do novo campo tempo_medio_resposta_minutos)
+    const totalResponseTimeRaw = encerrados.reduce((acc: number, curr: any) => acc + (curr.tempo_medio_resposta_minutos || 0), 0);
+    const validResponseTimesCount = encerrados.filter((e: any) => e.tempo_medio_resposta_minutos != null).length;
+    const avgResponseTime = validResponseTimesCount > 0 ? (totalResponseTimeRaw / validResponseTimesCount).toFixed(0) : 0;
+
+    const iaPercent = totalEncerrados > 0 ? Math.round((iaCount / totalEncerrados) * 100) : 0;
+
+    return {
+      pendingChats,
+      resolutionRate,
+      avgResponseTime,
+      iaPercent
+    };
+  }, [encerrados, chats]);
+
   const handleExport = () => {
     // Simular exportação de dados
     console.log('Exportando dados do período:', selectedPeriod);
@@ -42,28 +74,28 @@ const Dashboard = () => {
   const statsData = [
     {
       title: 'Atendimentos Pendentes',
-      value: '0',
+      value: loadingChats ? '...' : String(metrics.pendingChats),
       subtitle: 'Aguardando atendente',
       trend: { value: '0%', isPositive: true },
       icon: Clock
     },
     {
       title: 'Tempo Médio de Resposta',
-      value: '0min',
+      value: loadingEncerrados ? '...' : `${metrics.avgResponseTime}min`,
       subtitle: 'Meta: < 3min',
       trend: { value: '0%', isPositive: true },
       icon: TrendingUp
     },
     {
       title: 'Taxa de Resolução',
-      value: '0%',
+      value: loadingEncerrados ? '...' : `${metrics.resolutionRate}%`,
       subtitle: 'Resolvidos hoje',
       trend: { value: '0%', isPositive: true },
       icon: CheckCircle
     },
     {
       title: 'Atendimentos IA vs Humano',
-      value: '0%',
+      value: loadingEncerrados ? '...' : `${metrics.iaPercent}%`,
       subtitle: 'Resolvidos pela IA',
       trend: { value: '0%', isPositive: true },
       icon: MessageSquare

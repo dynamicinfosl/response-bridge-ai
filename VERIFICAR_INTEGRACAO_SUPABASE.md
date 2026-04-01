@@ -128,3 +128,12 @@ Após executar o SQL, crie o primeiro usuário:
 
 Se todos os itens do checklist estiverem marcados, a integração está completa e funcionando! 🎉
 
+
+
+
+
+
+
+
+
+

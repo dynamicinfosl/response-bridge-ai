@@ -113,3 +113,12 @@ CREATE TRIGGER update_users_updated_at
 -- 4. Clique em "Create User"
 -- ============================================
 
+
+
+
+
+
+
+
+
+

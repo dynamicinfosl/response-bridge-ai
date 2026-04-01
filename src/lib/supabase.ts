@@ -37,7 +37,9 @@ export interface User {
   id: string;
   email: string;
   name?: string;
-  role?: string;
+  role?: 'master' | 'admin' | 'encarregado' | 'user';
+  area?: 'tecnica' | 'comercial' | 'financeiro';
+  supervisor_id?: string;
   avatar_url?: string;
 }
 
@@ -46,8 +48,11 @@ export interface UserProfile {
   id: string;
   email: string;
   full_name?: string;
-  role?: string;
+  role?: 'master' | 'admin' | 'encarregado' | 'user';
+  area?: 'tecnica' | 'comercial' | 'financeiro';
+  supervisor_id?: string;
   avatar_url?: string;
   created_at?: string;
+  updated_at?: string;
 }
 

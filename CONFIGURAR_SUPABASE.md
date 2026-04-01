@@ -200,3 +200,12 @@ Se tiver problemas, verifique:
 - Logs do console do navegador (F12)
 - Logs do Supabase no dashboard
 
+
+
+
+
+
+
+
+
+

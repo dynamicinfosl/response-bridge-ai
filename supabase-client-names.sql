@@ -56,3 +56,12 @@ CREATE TRIGGER update_client_names_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_client_names_updated_at();
 
+
+
+
+
+
+
+
+
+

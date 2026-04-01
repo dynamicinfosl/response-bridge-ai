@@ -77,3 +77,12 @@ Consulte: `VERIFICAR_INTEGRACAO_SUPABASE.md`
 
 Depois de executar o SQL e criar o usuário, sua integração estará completa! 🚀
 
+
+
+
+
+
+
+
+
+

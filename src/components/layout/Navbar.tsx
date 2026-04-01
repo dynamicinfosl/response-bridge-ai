@@ -1,8 +1,16 @@
-import { Search, Menu } from 'lucide-react';
+import { Search, Menu, User as UserIcon, Settings, LogOut, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { useLocation } from 'react-router-dom';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu";
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEffect, useState } from 'react';
@@ -18,7 +26,8 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
   const location = useLocation();
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const [companyLogo, setCompanyLogo] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string>('Adapt Link');
@@ -89,7 +98,9 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
   const getDisplayRole = () => {
     if (user?.role) {
       const roleMap: Record<string, string> = {
+        'master': 'Master',
         'admin': 'Administrador',
+        'encarregado': 'Encarregado',
         'user': 'Usuário',
         'operator': 'Operador',
         'manager': 'Gerente',
@@ -118,6 +129,8 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
         return 'Colaboradores';
       case '/configuracoes':
         return 'Configurações';
+      case '/configuracoes-avancadas':
+        return 'Configurações Avançadas';
       default:
         return 'Atendimento';
     }
@@ -174,45 +187,68 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
           </div>
         </div>
 
-        {/* Seção Direita - Responsiva */}
-        <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 flex-shrink-0">
-          {/* Botão Novo - Oculto em mobile muito pequeno */}
-          <Button 
-            className="bg-blue-300/90 hover:bg-blue-300 text-primary-foreground px-2 sm:px-4 py-1.5 h-8 text-xs sm:text-sm font-medium rounded-full shadow-sm border-0 hidden xs:flex"
-            onClick={() => {
-              toast({
-                title: "Novo",
-                description: "Funcionalidade em desenvolvimento...",
-              });
-            }}
-          >
-            <span className="hidden sm:inline">Novo</span>
-            <span className="sm:hidden">+</span>
-          </Button>
-          
-          {/* User Avatar - Simplificado (sem dropdown) */}
+        {/* Seção Direita - Perfil e Autenticação */}
+        <div className="flex items-center gap-3 sm:gap-4 flex-shrink-0 ml-auto">
+          {/* User Context Tags - Neutral style */}
           {user && (
-            <div className="flex items-center gap-2">
-              <Avatar className="h-8 w-8 border-2 border-white/20">
-                <AvatarFallback className="bg-white/20 text-white text-xs">
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt={user.name || user.email} className="w-full h-full rounded-full" />
-                  ) : (
-                    getInitials(user.name, user.email)
-                  )}
-                </AvatarFallback>
-              </Avatar>
-              {!isMobile && (
-                <div className="flex flex-col items-start text-left">
-                  <span className="text-xs font-medium text-white whitespace-nowrap">
-                    {getDisplayName()}
-                  </span>
-                  <span className="text-xs text-white/70 whitespace-nowrap">
-                    {getDisplayRole()}
-                  </span>
+            <div className="hidden md:flex items-center gap-2 mr-4">
+              {user.area && (
+                <div className="px-2 py-0.5 rounded-md border border-white/20 bg-white/5 text-[10px] font-medium text-white/80 uppercase tracking-wider">
+                  Setor: {user.area === 'tecnica' ? 'Técnica' : 
+                          user.area === 'comercial' ? 'Comercial' : 
+                          user.area === 'financeiro' ? 'Financeiro' : user.area}
+                </div>
+              )}
+              {(user.role === 'master' || user.role === 'admin') && (
+                <div className="px-2 py-0.5 rounded-md border border-white/30 bg-white/10 text-[10px] font-bold text-white uppercase tracking-widest">
+                  {user.role === 'master' ? 'Master' : 'Admin'}
                 </div>
               )}
             </div>
+          )}
+
+          {/* User Profile - Pushed to the extremity */}
+          {user && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <div className="flex items-center gap-3 group cursor-pointer hover:bg-white/5 p-1 px-2 rounded-lg transition-colors">
+                  {!isMobile && (
+                    <div className="flex flex-col items-end text-right leading-none gap-1">
+                      <span className="text-sm font-bold text-white tracking-tight group-hover:text-white/90 transition-colors">
+                        {getDisplayName()}
+                      </span>
+                    </div>
+                  )}
+                  <Avatar className="h-10 w-10 border-2 border-white/30 shadow-md transition-all duration-200 group-hover:border-white/50 group-hover:scale-105">
+                    <AvatarFallback className="bg-white/20 text-white text-sm font-bold">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name || user.email} className="w-full h-full rounded-full" />
+                      ) : (
+                        getInitials(user.name, user.email)
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+                  {!isMobile && <ChevronDown className="h-3 w-3 text-white/50 group-hover:text-white/80 transition-colors" />}
+                </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 mt-2">
+                <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate('/perfil')} className="cursor-pointer">
+                  <UserIcon className="mr-2 h-4 w-4" />
+                  <span>Ver Perfil</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate('/configuracoes')} className="cursor-pointer">
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Configurações</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={signOut} className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Sair</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>

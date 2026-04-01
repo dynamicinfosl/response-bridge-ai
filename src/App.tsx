@@ -16,8 +16,11 @@ import OrdemServico from "./pages/OrdemServico";
 import Relatorios from "./pages/Relatorios";
 import ConfiguracaoIA from "./pages/ConfiguracaoIA";
 import TesteN8N from "./pages/TesteN8N";
+import Clientes from "./pages/Clientes";
+import Perfil from "./pages/Perfil";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import RoleProtectedRoute from "./components/auth/RoleProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -91,9 +94,11 @@ const App = () => (
                 <Route path="/ligacoes-ia" element={<ProtectedRoute><LigacoesIA /></ProtectedRoute>} />
                 <Route path="/ordem-servico" element={<ProtectedRoute><OrdemServico /></ProtectedRoute>} />
                 <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
+                <Route path="/clientes" element={<ProtectedRoute><Clientes /></ProtectedRoute>} />
                 <Route path="/configuracao-ia" element={<ProtectedRoute><ConfiguracaoIA /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
-                <Route path="/configuracoes-avancadas" element={<ProtectedRoute><ConfiguracoesAvancadas /></ProtectedRoute>} />
+                <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
+                <Route path="/configuracoes-avancadas" element={<RoleProtectedRoute allowedRoles={['master']}><ConfiguracoesAvancadas /></RoleProtectedRoute>} />
                 <Route path="/teste-n8n" element={<ProtectedRoute><TesteN8N /></ProtectedRoute>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

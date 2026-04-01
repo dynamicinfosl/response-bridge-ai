@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Lock, Mail } from 'lucide-react';
+import { Lock, Mail, HelpCircle } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -149,8 +149,18 @@ const Login = () => {
                 </Button>
               </div>
 
-                           <div className="text-center text-xs text-muted-foreground pt-3">
-               <p>Use suas credenciais do Supabase para fazer login</p>
+             <div className="text-center text-xs text-muted-foreground pt-3 space-y-2">
+               <p>Use suas credenciais do seu cadastro para fazer o login.</p>
+               <Button
+                 type="button"
+                 variant="ghost"
+                 size="sm"
+                 className="text-xs text-muted-foreground hover:text-primary h-auto p-1"
+                 onClick={() => window.location.href = 'mailto:suporte@adaptlink.com?subject=Dificuldade no Login'}
+               >
+                 <HelpCircle className="h-3 w-3 mr-1 inline" />
+                 Falar com suporte
+               </Button>
              </div>
           </form>
         </CardContent>

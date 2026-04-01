@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,11 +16,67 @@ import {
   Save,
   Plus,
   Trash2,
-  Play
+  Play,
+  Settings,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
+import { invalidateN8NCache } from '@/lib/n8n-config';
+import { usePermissions } from '@/hooks/usePermissions';
+import { ShieldX } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const ConfiguracoesAvancadas = () => {
+  const { canAccessAdvancedSettings } = usePermissions();
+  const navigate = useNavigate();
+
+  // Verificação adicional (fallback caso a rota não seja protegida)
+  if (!canAccessAdvancedSettings()) {
+    return (
+      <Layout>
+        <div className="min-h-screen flex items-center justify-center bg-background p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <ShieldX className="w-8 h-8 text-destructive" />
+                <CardTitle>Acesso Negado</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground">
+                Apenas usuários Master podem acessar as Configurações Avançadas.
+              </p>
+              <Button 
+                onClick={() => navigate('/dashboard')}
+                className="w-full"
+              >
+                Voltar ao Dashboard
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </Layout>
+    );
+  }
+  const { settings: n8nSettings, loading: n8nLoading, saveSettings: saveN8nSettings } = useSystemSettings();
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [n8nConfig, setN8nConfig] = useState({
+    n8n_api_url: '',
+    n8n_api_key: '',
+  });
+
+  // Carregar configurações do n8n quando o hook carregar
+  useEffect(() => {
+    if (!n8nLoading) {
+      setN8nConfig({
+        n8n_api_url: n8nSettings.n8n_api_url || '',
+        n8n_api_key: n8nSettings.n8n_api_key || '',
+      });
+    }
+  }, [n8nSettings, n8nLoading]);
+
   const [horarioAtendimento, setHorarioAtendimento] = useState({
     segunda: { inicio: '08:00', fim: '18:00', ativo: true },
     terca: { inicio: '08:00', fim: '18:00', ativo: true },
@@ -45,6 +101,18 @@ const ConfiguracoesAvancadas = () => {
   });
 
   const { toast } = useToast();
+
+  const handleSaveN8n = async () => {
+    const success = await saveN8nSettings({
+      n8n_api_url: n8nConfig.n8n_api_url,
+      n8n_api_key: n8nConfig.n8n_api_key,
+    });
+    
+    if (success) {
+      // Invalidar cache para forçar atualização nas próximas requisições
+      invalidateN8NCache();
+    }
+  };
 
   const handleSave = () => {
     toast({
@@ -100,6 +168,83 @@ const ConfiguracoesAvancadas = () => {
             Salvar Tudo
           </Button>
         </div>
+
+        {/* Configurações do n8n */}
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5 text-primary" />
+              Configurações do n8n
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-primary-muted p-4 rounded-lg mb-4">
+              <p className="text-sm text-primary">
+                <strong>Importante:</strong> Configure as URLs dos webhooks do n8n aqui. 
+                Essas configurações são salvas no banco de dados e têm prioridade sobre o arquivo `.env.local`.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="n8n-api-url">
+                  URL Base do n8n
+                </Label>
+                <Input
+                  id="n8n-api-url"
+                  value={n8nConfig.n8n_api_url}
+                  onChange={(e) => setN8nConfig(prev => ({ ...prev, n8n_api_url: e.target.value }))}
+                  placeholder="https://seu-n8n.com/webhook/api-frontend"
+                  disabled={n8nLoading}
+                />
+                <p className="text-xs text-muted-foreground">
+                  URL base do n8n. Deve terminar em <code>/webhook/api-frontend</code> (sem endpoints adicionais).
+                  O sistema adiciona automaticamente <code>/send-message</code> quando necessário.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="n8n-api-key">
+                  API Key do n8n (Opcional)
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="n8n-api-key"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={n8nConfig.n8n_api_key}
+                    onChange={(e) => setN8nConfig(prev => ({ ...prev, n8n_api_key: e.target.value }))}
+                    placeholder="Deixe vazio se não precisar de autenticação"
+                    disabled={n8nLoading}
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  API Key para autenticação no n8n. Deixe vazio se o n8n não requer autenticação.
+                </p>
+              </div>
+
+              <Button 
+                onClick={handleSaveN8n}
+                disabled={n8nLoading}
+                className="w-full bg-gradient-primary hover:shadow-primary"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Salvar Configurações do n8n
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Horário de Atendimento */}

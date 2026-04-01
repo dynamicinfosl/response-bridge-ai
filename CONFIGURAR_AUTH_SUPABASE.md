@@ -73,3 +73,12 @@ Depois de configurar:
 - ✅ Segurança built-in
 - ✅ Reset de senha automático
 - ✅ Confirmação de email (se habilitado)
+
+
+
+
+
+
+
+
+

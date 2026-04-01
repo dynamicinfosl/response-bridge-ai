@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -10,63 +10,104 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { UserCheck, MessageSquare } from 'lucide-react';
+import {
+  UserCheck,
+  MessageSquare,
+  Loader2,
+  Tag
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { chatwootAPI, type ChatwootAgent } from '@/lib/chatwoot';
+import { useTransferChat } from '@/hooks/useChats';
 
 interface TransferModalProps {
   isOpen: boolean;
   onClose: () => void;
   clientName: string;
+  chatId: string;
   currentAttendant?: string;
 }
 
-export const TransferModal = ({ isOpen, onClose, clientName, currentAttendant }: TransferModalProps) => {
+export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAttendant }: TransferModalProps) => {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [transferNote, setTransferNote] = useState('');
-  const { toast } = useToast();
+  const [agents, setAgents] = useState<ChatwootAgent[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const availableAgents = [
-    { id: '1', name: 'Carlos Silva', status: 'available', avatar: 'CS', atendimentos: 3 },
-    { id: '2', name: 'Ana Santos', status: 'available', avatar: 'AS', atendimentos: 5 },
-    { id: '3', name: 'Roberto Lima', status: 'busy', avatar: 'RL', atendimentos: 8 },
-    { id: '4', name: 'Mariana Costa', status: 'available', avatar: 'MC', atendimentos: 2 },
+  const { toast } = useToast();
+  const transferMutation = useTransferChat();
+
+  const sectors = [
+    { id: 'comercial', name: 'Comercial', color: 'bg-blue-500' },
+    { id: 'financeiro', name: 'Financeiro', color: 'bg-green-500' },
+    { id: 'tecnico', name: 'Técnico', color: 'bg-orange-500' },
   ];
 
-  const handleTransfer = () => {
-    if (!selectedAgent) return;
-    
-    const agent = availableAgents.find(a => a.id === selectedAgent);
-    
-    toast({
-      title: "Atendimento transferido!",
-      description: `Conversa com ${clientName} foi transferida para ${agent?.name}`,
-    });
-    
-    setSelectedAgent(null);
-    setTransferNote('');
-    onClose();
-  };
+  useEffect(() => {
+    if (isOpen) {
+      setLoading(true);
+      chatwootAPI.getAgents()
+        .then(setAgents)
+        .catch(err => {
+          console.error('Erro ao buscar agentes:', err);
+          toast({
+            title: "Erro",
+            description: "Não foi possível carregar a lista de atendentes.",
+            variant: "destructive"
+          });
+        })
+        .finally(() => setLoading(false));
+    }
+  }, [isOpen, toast]);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'available':
-        return 'bg-success/10 text-success border-success/20';
-      case 'busy':
-        return 'bg-warning/10 text-warning border-warning/20';
-      default:
-        return 'bg-muted/10 text-muted-foreground border-muted/20';
+  const handleTransfer = async () => {
+    if (!selectedAgent && !selectedSector) return;
+
+    try {
+      // Se tiver agente selecionado, transfere
+      if (selectedAgent) {
+        await transferMutation.mutateAsync({
+          id: chatId,
+          attendantId: selectedAgent
+        });
+      }
+
+      // Se tiver setor selecionado, adiciona label
+      if (selectedSector) {
+        const sectorName = sectors.find(s => s.id === selectedSector)?.name;
+        if (sectorName) {
+          await chatwootAPI.addLabel(Number(chatId), [sectorName]);
+        }
+      }
+
+      // Se houver nota, envia como mensagem privada (internal note)
+      if (transferNote.trim()) {
+        await chatwootAPI.sendMessage(Number(chatId), transferNote, true);
+      }
+
+      toast({
+        title: "Atendimento transferido!",
+        description: `Conversa com ${clientName} foi atualizada com sucesso.`,
+      });
+
+      setSelectedAgent(null);
+      setSelectedSector(null);
+      setTransferNote('');
+      onClose();
+    } catch (error) {
+      console.error('Erro na transferência:', error);
+      toast({
+        title: "Erro na transferência",
+        description: "Ocorreu um problema ao tentar transferir o atendimento.",
+        variant: "destructive"
+      });
     }
   };
 
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'available':
-        return 'Disponível';
-      case 'busy':
-        return 'Ocupado';
-      default:
-        return 'Offline';
-    }
+  const getStatusBadge = (agent: ChatwootAgent) => {
+    // Chatwoot simplificado para este exemplo
+    return 'bg-success/10 text-success border-success/20';
   };
 
   return (
@@ -78,52 +119,77 @@ export const TransferModal = ({ isOpen, onClose, clientName, currentAttendant }:
             Transferir Atendimento
           </DialogTitle>
           <p className="text-sm text-muted-foreground">
-            Transferindo conversa com <strong>{clientName}</strong>
+            Gerenciando conversa com <strong>{clientName}</strong>
             {currentAttendant && ` (atual: ${currentAttendant})`}
           </p>
         </DialogHeader>
-        
+
         <div className="space-y-4">
+          {/* Seleção de Setor */}
           <div className="space-y-2">
-            <h4 className="text-sm font-medium">Selecionar Atendente:</h4>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {availableAgents.map((agent) => (
-                <div
-                  key={agent.id}
-                  onClick={() => setSelectedAgent(agent.id)}
-                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedAgent === agent.id 
-                      ? 'border-primary bg-primary/5' 
-                      : 'border-border hover:bg-muted/50'
-                  }`}
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Tag className="w-4 h-4" /> Classificar Setor:
+            </h4>
+            <div className="flex gap-2">
+              {sectors.map((sector) => (
+                <Badge
+                  key={sector.id}
+                  variant={selectedSector === sector.id ? "default" : "outline"}
+                  className={`cursor-pointer px-3 py-1 ${selectedSector === sector.id ? sector.color : 'hover:bg-muted'
+                    }`}
+                  onClick={() => setSelectedSector(selectedSector === sector.id ? null : sector.id)}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                          {agent.avatar}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm font-medium">{agent.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {agent.atendimentos} atendimentos ativos
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant="outline" className={getStatusBadge(agent.status)}>
-                      {getStatusLabel(agent.status)}
-                    </Badge>
-                  </div>
-                </div>
+                  {sector.name}
+                </Badge>
               ))}
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Nota da transferência (opcional):</label>
+            <h4 className="text-sm font-medium">Selecionar Atendente:</h4>
+            {loading ? (
+              <div className="flex justify-center p-4">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {agents.map((agent) => (
+                  <div
+                    key={agent.id}
+                    onClick={() => setSelectedAgent(selectedAgent === String(agent.id) ? null : String(agent.id))}
+                    className={`p-3 rounded-lg border cursor-pointer transition-colors ${selectedAgent === String(agent.id)
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:bg-muted/50'
+                      }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8">
+                          <AvatarFallback className="bg-primary text-white text-xs">
+                            {agent.name.substring(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="text-sm font-medium">{agent.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {agent.role === 'administrator' ? 'Administrador' : 'Agente'}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={getStatusBadge(agent)}>
+                        Disponível
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Nota interna (opcional):</label>
             <Textarea
-              placeholder="Adicione contexto para o próximo atendente..."
+              placeholder="Adicione observações para o próximo atendente..."
               value={transferNote}
               onChange={(e) => setTransferNote(e.target.value)}
               className="min-h-20"
@@ -135,13 +201,13 @@ export const TransferModal = ({ isOpen, onClose, clientName, currentAttendant }:
           <Button variant="outline" onClick={onClose}>
             Cancelar
           </Button>
-          <Button 
+          <Button
             onClick={handleTransfer}
-            disabled={!selectedAgent}
-            className="bg-gradient-primary hover:shadow-primary"
+            disabled={!selectedAgent && !selectedSector}
+            className="bg-gradient-primary hover:shadow-primary text-white"
           >
             <UserCheck className="w-4 h-4 mr-2" />
-            Transferir
+            Salvar Alterações
           </Button>
         </DialogFooter>
       </DialogContent>

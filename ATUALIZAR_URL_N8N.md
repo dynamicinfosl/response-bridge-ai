@@ -21,6 +21,16 @@ VITE_N8N_API_KEY=
 
 ---
 
+## 🔒 CORS e desenvolvimento local
+
+Se no console aparecer **"blocked by CORS policy: No 'Access-Control-Allow-Origin' header"** ao acessar a página de Atendimentos em `http://localhost:8080`, o n8n não está liberando requisições da sua origem.
+
+**Em desenvolvimento** isso é contornado automaticamente: o Vite faz **proxy** das chamadas. O front chama ` /api/n8n?endpoint=chats` (mesma origem) e o servidor de dev encaminha para a `VITE_N8N_API_URL`. Nada é preciso configurar além do `.env.local` com `VITE_N8N_API_URL` e `VITE_N8N_API_KEY` (se precisar). Reinicie o servidor de dev (`npm run dev` ou `bun run dev`) após alterar o `.env.local`.
+
+**Em produção** o front e o n8n precisam estar na mesma origem, ou o servidor do n8n (ou o proxy na frente dele) precisa enviar `Access-Control-Allow-Origin` com a origem do front (por exemplo `https://seu-dominio.com`).
+
+---
+
 ## ⚠️ Problema Identificado
 
 O webhook está retornando apenas:

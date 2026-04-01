@@ -57,3 +57,12 @@ SELECT
   'admin'
 FROM auth.users 
 WHERE email = 'admin@adaptlink.com';
+
+
+
+
+
+
+
+
+

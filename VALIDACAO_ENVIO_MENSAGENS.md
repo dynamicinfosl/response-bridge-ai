@@ -303,3 +303,12 @@ POST https://caringvulture-n8n.cloudfy.live/webhook/api-frontend/send-message
 
 Se tudo funcionar, o envio de mensagens está configurado! 🚀
 
+
+
+
+
+
+
+
+
+

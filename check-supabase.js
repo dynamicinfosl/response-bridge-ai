@@ -42,3 +42,12 @@ async function checkSupabase() {
 }
 
 checkSupabase();
+
+
+
+
+
+
+
+
+
