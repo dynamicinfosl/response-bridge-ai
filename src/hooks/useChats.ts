@@ -75,9 +75,21 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     } else {
       type = 'document';
     }
+    // Tenta extrair um nome real se o Chatwoot retornar apenas o tipo genérico
+    let fileName = attachment.file_name || attachment.file_type || 'document';
+    
+    if ((fileName === 'file' || !fileName.includes('.')) && attachment.data_url) {
+      try {
+        const urlPart = attachment.data_url.split('/').pop()?.split('?')[0];
+        if (urlPart && urlPart.includes('.')) {
+          fileName = decodeURIComponent(urlPart);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     media = {
       url: attachment.data_url,
-      name: attachment.file_type,
+      name: fileName,
     };
   }
 
@@ -98,7 +110,7 @@ export function useChats() {
     queryKey: ['chats'],
     queryFn: async () => {
       try {
-        console.log('🔄 Buscando chats (Chatwoot) e resumos (Supabase)...');
+        // console.log('🔄 Buscando chats (Chatwoot) e resumos (Supabase)...');
 
         // Timeout para evitar travamentos silenciosos de rede
         const timeoutPromise = new Promise<never>((_, reject) =>
@@ -132,7 +144,7 @@ export function useChats() {
           timeoutPromise
         ]) as [any, any[]];
 
-        console.log('✅ Resposta Fetch Raw resolvida!');
+        // console.log('✅ Resposta Fetch Raw resolvida!');
 
         // Chatwoot retorna { data: { payload: [...] } } via proxy/vite
         let conversations: any[] = [];
@@ -162,7 +174,7 @@ export function useChats() {
           return mappedChat;
         });
 
-        console.log('📊 Total de chats mapeados:', mapeados.length);
+        // console.log('📊 Total de chats mapeados:', mapeados.length);
         return mapeados;
       } catch (err) {
         console.error('🚨 ERRO FATAL no queryFn do useChats:', err);

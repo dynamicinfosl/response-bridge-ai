@@ -392,7 +392,7 @@ export default function Colaboradores() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card>
             <CardContent className="pt-6 flex items-center gap-4">
               <div className="p-2 bg-primary/10 rounded-lg"><UsersIcon className="w-5 h-5 text-primary" /></div>
@@ -427,7 +427,7 @@ export default function Colaboradores() {
                 />
               </div>
               <Select value={filterArea} onValueChange={setFilterArea}>
-                <SelectTrigger className="w-[160px]">
+                <SelectTrigger className="w-full sm:w-[160px]">
                   <SelectValue placeholder="Todas as áreas" />
                 </SelectTrigger>
                 <SelectContent>
@@ -438,7 +438,7 @@ export default function Colaboradores() {
                 </SelectContent>
               </Select>
               <Select value={filterRole} onValueChange={setFilterRole}>
-                <SelectTrigger className="w-[160px]">
+                <SelectTrigger className="w-full sm:w-[160px]">
                   <SelectValue placeholder="Todas as roles" />
                 </SelectTrigger>
                 <SelectContent>
@@ -480,9 +480,9 @@ export default function Colaboradores() {
                   : 'Nenhum resultado para os filtros aplicados.'}
               </div>
             ) : (
-              <div className="divide-y">
+              <div className="divide-y overflow-x-auto">
                 {filtered.map(u => (
-                  <div key={u.id} className="flex items-center gap-4 px-6 py-4 hover:bg-muted/30 transition-colors">
+                  <div key={u.id} className="flex items-center gap-3 sm:gap-4 px-3 sm:px-6 py-4 hover:bg-muted/30 transition-colors">
                     <Avatar className="w-10 h-10">
                       <AvatarFallback className="bg-primary/10 text-primary font-semibold">
                         {initials(u.full_name, u.email)}

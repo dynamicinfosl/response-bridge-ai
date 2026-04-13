@@ -22,15 +22,21 @@ import {
   UserCheck,
   RotateCcw,
   ChevronDown,
+  ChevronLeft,
   FileText,
   Download,
   UserSearch,
+  UserPlus,
   Play,
-  Pause
+  Pause,
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat } from '@/hooks/useChats';
 import { useAuth } from '@/contexts/AuthContext';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { Loader2 } from 'lucide-react';
 import {
   Dialog,
@@ -43,6 +49,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { consultaDoc, consultaNome } from '@/lib/mk-api';
 import type { MKClienteDoc } from '@/lib/mk-api';
+import { useClienteResumo } from '@/hooks/useMK';
 import { ClientSummaryPanel } from '@/components/atendimentos/ClientSummaryPanel';
 const WhatsAppAudioPlayer = ({ url }: { url: string }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -138,6 +145,7 @@ const WhatsAppAudioPlayer = ({ url }: { url: string }) => {
 };
 
 const Atendimentos = () => {
+  const isMobile = useIsMobile();
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [messageText, setMessageText] = useState('');
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -148,10 +156,16 @@ const Atendimentos = () => {
   const [searchQuery, setSearchQuery] = useState<string>(''); // Busca de conversas
   const [showScrollButton, setShowScrollButton] = useState(false); // Mostrar botão de scroll
   const [newMessageCount, setNewMessageCount] = useState(0); // Contador de novas mensagens
-  // Painel resumo cliente MK
+  // Painel resumo cliente MK - Gerenciamento por chat para evitar vazamento de dados
   const [showBuscarClienteMK, setShowBuscarClienteMK] = useState(false);
-  const [clienteMK, setClienteMK] = useState<MKClienteDoc | null>(null);
-  const [cdClienteMK, setCdClienteMK] = useState<string | null>(null);
+  const [showMkPanel, setShowMkPanel] = useState(false);
+  const [chatMKMap, setChatMKMap] = useState<Record<string, { cd: string; cliente: MKClienteDoc }>>({});
+  
+  // Identidade derivada do chat selecionado
+  const currentMKIdentity = selectedChat ? chatMKMap[selectedChat] : null;
+  const cdClienteMK = currentMKIdentity?.cd || null;
+  const clienteMK = currentMKIdentity?.cliente || null;
+
   const [searchMKBy, setSearchMKBy] = useState<'doc' | 'nome'>('doc');
   const [searchMKValue, setSearchMKValue] = useState('');
   const [searchMKLoading, setSearchMKLoading] = useState(false);
@@ -178,20 +192,11 @@ const Atendimentos = () => {
   const reactivateAIMutation = useReactivateAI();
   const interveneChatMutation = useInterveneChat();
   
+  // Hook para dados rápidos do MK no cabeçalho
+  const { data: mkSummaryData, isLoading: mkSummaryLoading } = useClienteResumo(cdClienteMK, clienteMK, !!cdClienteMK);
+
   const { user } = useAuth();
   
-  // Log de depuração do perfil do usuário
-  useEffect(() => {
-    if (user) {
-      console.log('👤 Perfil Logado:', {
-        id: user.id,
-        role: user.role,
-        area: user.area,
-        isMasterOrAdmin: user.role === 'master' || user.role === 'admin'
-      });
-    }
-  }, [user]);
-
   // Controle de visualização de mensagens para chats fechados
   const [viewMessagesForClosedChat, setViewMessagesForClosedChat] = useState<Record<string, boolean>>({});
 
@@ -219,27 +224,55 @@ const Atendimentos = () => {
     return !normalizedLabels.some(l => SECTOR_LABELS.includes(l));
   };
 
-  // Marcar como lido na API ao abrir o chat
+  // Marcar como lido na API ao abrir o chat e fechar painel MK
   useEffect(() => {
     if (selectedChat) {
       markAsReadMutation.mutate(selectedChat);
+      setShowMkPanel(false); // Fecha o painel ao trocar de chat
     }
   }, [selectedChat]);
 
-  // Debug: Log de erro
+  // Auto-detecção de CPF nas mensagens
   useEffect(() => {
-    if (chatsError) {
-      console.error('❌ Erro ao buscar chats:', chatsError);
+    if (selectedChat && messagesData && messagesData.length > 0 && !cdClienteMK) {
+      const cpfRegex = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/;
+      // Procura nas últimas 50 mensagens
+      const contentPool = [ ...messagesData ].reverse().slice(0, 50);
+      for (const msg of contentPool) {
+        const match = msg.content?.match(cpfRegex);
+        if (match) {
+          const foundCpf = match[0].replace(/\D/g, '');
+          consultaDoc(foundCpf).then(r => {
+            const arr = Array.isArray(r) ? r : r ? [r] : [];
+            const first = arr[0];
+            if (first) {
+              const cd = String(
+                (first as any).cd_cliente ?? 
+                (first as any).cdcliente ?? 
+                (first as any).CodigoPessoa ?? 
+                (first as any).CodPessoa ?? 
+                (first as any).idPessoa ?? 
+                (first as any).id ?? 
+                ''
+              );
+              if (cd) {
+                setChatMKMap(prev => ({
+                  ...prev,
+                  [selectedChat]: { cd, cliente: first as MKClienteDoc }
+                }));
+              }
+            }
+          }).catch(() => { /* falha silenciosa no auto */ });
+          break;
+        }
+      }
     }
-  }, [chatsError]);
+  }, [selectedChat, messagesData, cdClienteMK]);
 
   // Garantir que chats é sempre um array e normalizar os dados
   // O n8n pode retornar um objeto único ou um array
   const chats = (() => {
-    console.log('🔍 Iniciando normalização de chats. chatsData:', chatsData);
-
     if (!chatsData) {
-      console.log('⚠️ chatsData é null/undefined');
       return [];
     }
 
@@ -247,7 +280,6 @@ const Atendimentos = () => {
 
     // Se já é um array, usa direto
     if (Array.isArray(chatsData)) {
-      console.log('📦 chatsData é array com', chatsData.length, 'itens');
       rawChats = chatsData;
       // Filtrar objetos que claramente não são chats (ex: {success: true})
       rawChats = rawChats.filter(item => {
@@ -261,7 +293,6 @@ const Atendimentos = () => {
         // Se tem apenas 'success' ou 'pairedItem' (sem json), não é um chat
         const keys = Object.keys(item);
         if (keys.length <= 2 && (keys.includes('success') || keys.includes('pairedItem'))) {
-          console.log('🚫 Filtrando item não-chat:', item);
           return false;
         }
 
@@ -272,7 +303,14 @@ const Atendimentos = () => {
 
         return true;
       });
-      console.log('📦 Após filtrar não-chats:', rawChats.length, 'itens');
+      rawChats = rawChats.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        if ('json' in item && typeof item.json === 'object') return true;
+        const keys = Object.keys(item);
+        if (keys.length <= 2 && (keys.includes('success') || keys.includes('pairedItem'))) return false;
+        if ('id' in item || 'chatid' in item || 'pushName' in item || 'pushname' in item) return true;
+        return true;
+      });
     }
     // Se é um objeto, verifica se tem propriedade 'messages' (quando vem do json_agg)
     else if (typeof chatsData === 'object' && chatsData !== null) {
@@ -303,17 +341,13 @@ const Atendimentos = () => {
     }
 
     // Extrair dados de dentro de objetos {json: {...}} se existir (formato do n8n)
-    console.log('🔄 Extraindo json de', rawChats.length, 'itens');
     rawChats = rawChats.map((item, idx) => {
       // Se o item tem uma propriedade 'json' e é um objeto, extrai o json
       if (item && typeof item === 'object' && 'json' in item && typeof item.json === 'object') {
-        console.log(`✅ Item ${idx}: extraindo json`, item.json);
         return item.json;
       }
-      console.log(`📄 Item ${idx}: usando direto`, item);
       return item;
     });
-    console.log('🔄 Após extrair json:', rawChats.length, 'itens');
 
     // Normalizar os dados e filtrar chats inválidos
     const normalizedChats = rawChats
@@ -329,7 +363,6 @@ const Atendimentos = () => {
 
         // Preservar id original e phone original
         const chatId = chat.id?.toString() || chat.chatid?.toString() || null;
-        // Prioridade real para o telefone
         const phone = chat.phone?.toString() || chat.clientPhone?.toString() || '';
 
         const normalized = {
@@ -355,19 +388,8 @@ const Atendimentos = () => {
 
         const isValid = validId && !isSuccessResponse;
 
-        if (!isValid && chat.id) {
-          console.warn('Chat filtrado (inválido):', { id: chat.id, phone: chat.phone, pushName: chat.pushName });
-        }
-
         return isValid;
       });
-
-    // Debug: Log dos chats normalizados
-    if (normalizedChats.length > 0) {
-      console.log('✅ Chats normalizados:', normalizedChats.length, normalizedChats);
-    } else if (rawChats.length > 0) {
-      console.warn('⚠️ Chats foram filtrados! Raw chats:', rawChats);
-    }
 
     return normalizedChats;
   })();
@@ -779,8 +801,12 @@ const Atendimentos = () => {
         const first = arr[0];
         if (first) {
           const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? '');
-          setClienteMK(first as MKClienteDoc);
-          setCdClienteMK(cd || null);
+          if (selectedChat) {
+            setChatMKMap(prev => ({
+              ...prev,
+              [selectedChat]: { cd, cliente: first as MKClienteDoc }
+            }));
+          }
           setShowBuscarClienteMK(false);
           setSearchMKValue('');
         } else {
@@ -792,8 +818,12 @@ const Atendimentos = () => {
         const first = arr[0];
         if (first) {
           const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? '');
-          setClienteMK(first as MKClienteDoc);
-          setCdClienteMK(cd || null);
+          if (selectedChat) {
+            setChatMKMap(prev => ({
+              ...prev,
+              [selectedChat]: { cd, cliente: first as MKClienteDoc }
+            }));
+          }
           setShowBuscarClienteMK(false);
           setSearchMKValue('');
         } else {
@@ -891,20 +921,6 @@ const Atendimentos = () => {
     setChatsToShow(20);
   }, [statusFilter]);
 
-  // Debug: Log para verificar quantos chats estão sendo retornados
-  useEffect(() => {
-    if (chats.length > 0) {
-      console.log('📊 Chats carregados:', chats.length);
-      console.log('📝 Detalhes dos chats (normalizado):');
-      chats.forEach((chat, idx) => {
-        console.log(`  ${idx + 1}. ${formatClientName(chat)}`);
-        console.log(`     - ID: ${chat.id}`);
-        console.log(`     - pushName (normalizado): "${chat.pushName}"`);
-        console.log(`     - lastMessage (normalizado): "${chat.lastMessage?.substring(0, 50)}..."`);
-      });
-    }
-  }, [chats]);
-
   // Mostrar loading
   if (chatsLoading) {
     return (
@@ -945,35 +961,46 @@ const Atendimentos = () => {
 
   return (
     <Layout>
-      <div className="space-y-4 sm:space-y-6 h-[calc(100vh-8rem)] flex flex-col">
+      <div className="flex flex-col h-full gap-3">
         {/* Page Header */}
-        <div className="flex-shrink-0">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-foreground">Atendimentos</h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Gerencie todas as conversas em tempo real
-          </p>
+        <div className={cn(
+          "flex-shrink-0",
+          isMobile && selectedChat && "hidden"
+        )}>
+          <h1 className="text-base sm:text-xl font-bold text-foreground leading-tight">Atendimentos</h1>
+          <p className="text-xs text-muted-foreground">Gerencie todas as conversas em tempo real</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 flex-1 min-h-0">
-          {/* Chat List */}
-          <Card className="shadow-card">
+        <div className="flex-1 overflow-hidden flex flex-col lg:grid lg:grid-cols-3 gap-3">
+          {/* Chat List - No mobile, só aparece quando não tem chat selecionado */}
+          <Card className={cn(
+            "shadow-card flex flex-col min-h-0",
+            isMobile && selectedChat && "hidden"
+          )}>
             <CardHeader className="pb-3">
+              <div className="flex flex-col space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CardTitle className="text-base sm:text-lg">Conversas</CardTitle>
+                  <div className="flex items-center gap-1.5">
+                    <CardTitle className="text-sm sm:text-base font-bold text-foreground">Conversas</CardTitle>
                     {user && (
-                      <Badge variant="secondary" className="text-[10px] uppercase font-bold px-1.5 py-0 bg-muted">
+                      <Badge variant="secondary" className="text-[9px] uppercase font-bold px-1 py-0 bg-[#f0f2f5] text-[#54656f] border-none">
                         {user.role} {user.area ? `| ${user.area}` : ''}
                       </Badge>
                     )}
                   </div>
-                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button variant="outline" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1">
+                    <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Filtros</span>
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
-                    className="text-xs border rounded px-2 py-1.5 w-full sm:w-auto"
+                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
-                    <option value="all">Todos</option>
+                    <option value="all">Status: Todos</option>
                     <option value="pendente">Pendentes</option>
                     <option value="em_andamento">Em Andamento</option>
                     <option value="concluido">Concluídos</option>
@@ -981,26 +1008,21 @@ const Atendimentos = () => {
                   <select
                     value={sectorFilter}
                     onChange={(e) => setSectorFilter(e.target.value)}
-                    className="text-xs border rounded px-2 py-1.5 w-full sm:w-auto"
+                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
-                    <option value="all">Todos Setores</option>
-                    <option value="triagem">Triagem (Aguardando)</option>
+                    <option value="all">Setores: Todos</option>
+                    <option value="triagem">Triagem</option>
                     <option value="comercial">Comercial</option>
                     <option value="financeiro">Financeiro</option>
                     <option value="tecnico">Técnico</option>
                   </select>
-                  <Button variant="outline" size="sm" className="w-full sm:w-auto">
-                    <Filter className="w-4 h-4 mr-2" />
-                    <span className="hidden sm:inline">Filtros</span>
-                    <span className="sm:hidden">Filtrar</span>
-                  </Button>
                 </div>
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <div className="relative mt-2">
+                <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nome ou telefone..."
-                  className="pl-9"
+                  placeholder="Buscar..."
+                  className="pl-8 h-8 text-xs sm:text-sm"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -1168,45 +1190,118 @@ const Atendimentos = () => {
             </CardContent>
           </Card>
 
-          {/* Chat Interface */}
-          <div className="lg:col-span-2 flex flex-col min-h-0">
+          {/* Chat Interface - No mobile, aparece quando tem chat selecionado */}
+          <div className={cn(
+            "lg:col-span-2 flex flex-col min-h-0",
+            isMobile && !selectedChat && "hidden"
+          )}>
             {selectedChatData ? (
               <Card className="shadow-card h-full flex flex-col min-h-0">
                 {/* Chat Header */}
-                <CardHeader className="pb-3 border-b border-border">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <Avatar className="h-10 w-10">
-                          <AvatarFallback className="bg-primary text-primary-foreground">
+                <CardHeader className="py-2 sm:py-3 px-3 sm:px-4 border-b border-border bg-background/50">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                      {isMobile && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 w-7 p-0 flex-shrink-0"
+                          onClick={() => setSelectedChat(null)}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <div className="relative flex-shrink-0">
+                        <Avatar className="h-8 w-8 sm:h-10 sm:w-10">
+                          <AvatarFallback className="bg-primary text-primary-foreground text-xs sm:text-sm">
                             {getInitials(formatClientName(selectedChatData))}
                           </AvatarFallback>
                         </Avatar>
                         {selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento') && (
-                          <span className="absolute -top-1 -right-1 flex h-4 w-4">
+                          <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-red-500 border-2 border-white"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border border-white"></span>
                           </span>
                         )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-lg">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h3 className="font-semibold text-sm sm:text-base truncate max-w-[120px] sm:max-w-[180px] md:max-w-none">
                             {formatClientName(selectedChatData)}
                           </h3>
                           {selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento') && (
-                            <Badge className="bg-red-500 hover:bg-red-600 text-white animate-pulse border-none px-2 py-0">
-                              🚨 INTERVENÇÃO HUMANA
+                            <Badge className="bg-red-500 hover:bg-red-600 text-white text-[8px] sm:text-[9px] animate-pulse border-none px-1 py-0 flex-shrink-0">
+                              INTERVENÇÃO
                             </Badge>
                           )}
+                          
+                          {/* Indicadores MKCloud Rápidos */}
+                          {cdClienteMK ? (
+                            mkSummaryData ? (
+                              <div 
+                                className="flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300 flex-wrap"
+                              >
+                                {/* Conexão */}
+                                {(() => {
+                                  const connections = mkSummaryData.conexoes || [];
+                                  const hasConnections = connections.length > 0;
+                                  const isOnline = connections.some(c => {
+                                    const s = String(c.status_conexao || '').toLowerCase().trim();
+                                    return s.includes('conectado') || s.includes('online') || s.includes('ativo') || s === 'c' || s === 'a';
+                                  });
+                                  
+                                  const mainStatus = hasConnections 
+                                    ? (isOnline ? 'Conectado' : 'Desconectado')
+                                    : 'Sem Conexão';
+                                  return (
+                                    <Badge 
+                                      variant="outline" 
+                                      className={cn(
+                                        "px-1 py-0 text-[9px] border-none font-bold uppercase cursor-pointer hover:brightness-95",
+                                        isOnline ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                      )}
+                                    >
+                                      {mainStatus}
+                                    </Badge>
+                                  );
+                                })()}
+
+                                {/* Financeiro */}
+                                {(() => {
+                                  const faturas = mkSummaryData.faturas || [];
+                                  const temVencida = faturas.some(f => String(f.situacao || '').toLowerCase().includes('vencida'));
+                                  return (
+                                    <Badge 
+                                      variant="outline" 
+                                      className={cn(
+                                        "px-1 py-0 text-[9px] border-none font-bold uppercase cursor-pointer hover:brightness-95",
+                                        temVencida ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                                      )}
+                                    >
+                                      {temVencida ? 'Fatura Vencida' : 'Financeiro em Dia'}
+                                    </Badge>
+                                  );
+                                })()}
+
+                                {/* Suspensão */}
+                                {mkSummaryData.contratos.some(c => c.status?.toLowerCase().includes('suspenso')) && (
+                                  <Badge className="px-1 py-0 text-[9px] bg-red-600 text-white font-bold uppercase border-none cursor-pointer">
+                                    Suspenso
+                                  </Badge>
+                                )}
+                              </div>
+                            ) : mkSummaryLoading ? (
+                              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground ml-1" />
+                            ) : null
+                          ) : null}
                         </div>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-[10px] sm:text-xs text-muted-foreground truncate">
                           {formatPhoneNumber(selectedChatData.phone, selectedChatData.id)}
                         </p>
-                        <div className="flex items-center gap-3 mt-1">
-                          <div className="flex items-center gap-1.5 bg-muted/30 px-2 py-0.5 rounded-md border border-border/50">
+                        <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 overflow-x-auto no-scrollbar">
+                          <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0 rounded border border-border/50">
                             {getChannelIcon(selectedChatData.channel || selectedChatData.WhatsApp || 'WhatsApp')}
-                            <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                            <span className="text-[9px] sm:text-[10px] font-medium text-muted-foreground whitespace-nowrap lowercase">
                               {selectedChatData.channel || selectedChatData.WhatsApp || 'WhatsApp'}
                             </span>
                           </div>
@@ -1215,82 +1310,69 @@ const Atendimentos = () => {
                             const sector = getSectorInfo(selectedChatData.labels);
                             if (!sector) return null;
                             return (
-                              <Badge variant="outline" className={cn("px-2 py-0.5 font-bold uppercase text-[10px]", sector.className)}>
+                              <Badge variant="outline" className={cn("px-1.5 py-0 font-bold uppercase text-[9px]", sector.className)}>
                                 {sector.label}
                               </Badge>
                             );
                           })()}
-                          
-                          {selectedChatData.status !== 'concluido' && (
-                            <>
-                              {selectedChatData.attendant && (selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento' || l.toLowerCase() === 'agente-off')) ? (
-                                <div className="flex items-center gap-1.5 bg-primary/5 px-2 py-0.5 rounded-md border border-primary/10">
-                                  <UserCheck className="w-3.5 h-3.5 text-primary" />
-                                  <span className="text-[11px] font-bold text-primary whitespace-nowrap uppercase">
-                                    Sendo atendido por: {selectedChatData.attendant}
-                                  </span>
-                                </div>
-                              ) : (!selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento' || l.toLowerCase() === 'agente-off')) ? (
-                                <div className="flex items-center gap-1.5 bg-success/5 px-2 py-0.5 rounded-md border border-success/10">
-                                  <Bot className="w-3.5 h-3.5 text-success" />
-                                  <span className="text-[11px] font-bold text-success animate-pulse whitespace-nowrap uppercase">
-                                    Sendo atendido por: IA ATIVA
-                                  </span>
-                                </div>
-                              ) : selectedChatData.attendant ? (
-                                <div className="flex items-center gap-1.5 bg-primary/5 px-2 py-0.5 rounded-md border border-primary/10">
-                                  <UserCheck className="w-3.5 h-3.5 text-primary" />
-                                  <span className="text-[11px] font-bold text-primary whitespace-nowrap uppercase">
-                                    Sendo atendido por: {selectedChatData.attendant}
-                                  </span>
-                                </div>
-                              ) : null}
-                            </>
-                          )}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap">
+                    
+                    <div className="flex items-center gap-1.5 flex-wrap md:justify-end">
                       <Button
-                        variant="outline"
+                        variant={cdClienteMK ? "default" : "outline"}
                         size="sm"
-                        onClick={() => { setSearchMKError(null); setShowBuscarClienteMK(true); }}
+                        className={cn(
+                          "h-auto py-1 text-[10px] px-2 flex flex-col items-center justify-center text-center",
+                          cdClienteMK ? "bg-green-600 hover:bg-green-700 text-white border-green-700 shadow-sm" : ""
+                        )}
+                        onClick={() => { 
+                          if (cdClienteMK) {
+                            setShowMkPanel(true);
+                            // Caso já estivesse aberto mas minimizado
+                            window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
+                          } else {
+                            setSearchMKError(null); 
+                            setShowBuscarClienteMK(true); 
+                          }
+                        }}
                       >
-                        <UserSearch className="w-4 h-4 mr-2" />
-                        Cliente MK
+                        <div className="flex items-center">
+                          {cdClienteMK ? <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> : <UserSearch className="w-3.5 h-3.5 mr-1" />}
+                          <span className="font-semibold">{cdClienteMK ? "Cliente MK" : "Cliente MK"}</span>
+                        </div>
+                        {cdClienteMK && (
+                          <span className="text-[8px] opacity-90 -mt-0.5 font-medium">Identificado</span>
+                        )}
                       </Button>
-                      {(() => {
-                        const hasNeedsHuman = selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
-                        const sBadge = getStatusBadge(selectedChatData.status || (selectedChatData as any).statusP, hasNeedsHuman);
-                        return (
-                          <Badge variant="outline" className={sBadge.className}>
-                            {sBadge.label}
-                          </Badge>
-                        );
-                      })()}
-                      {(selectedChatData.status || (selectedChatData as any).statusP) !== 'concluido' && (
+                      
+                      {(selectedChatData.status || (selectedChatData as any).statusP) !== 'concluido' ? (
                         <>
                           <Button
                             variant="outline"
                             size="sm"
+                            className="h-7 text-[10px] px-2"
                             onClick={() => setShowTransferModal(true)}
                           >
-                            <UserCheck className="w-4 h-4 mr-2" />
+                            <UserCheck className="w-3.5 h-3.5 mr-1" />
                             Transferir
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
+                            className="h-7 text-[10px] px-2"
                             onClick={() => setShowCloseModal(true)}
                           >
-                            <CheckCircle2 className="w-4 h-4 mr-2" />
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                             Encerrar
                           </Button>
-                          {selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento' || l.toLowerCase() === 'agente-off') && (
+                          
+                          {selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento' || l.toLowerCase() === 'agente-off') ? (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="bg-primary/10 text-primary border-primary/20 hover:bg-primary/20"
+                              className="h-7 text-[10px] px-2 bg-primary/5 text-primary border-primary/20"
                               onClick={() => {
                                 reactivateAIMutation.mutate({
                                   id: selectedChatData.id,
@@ -1299,15 +1381,14 @@ const Atendimentos = () => {
                               }}
                               disabled={reactivateAIMutation.isPending}
                             >
-                              <Bot className={cn("w-4 h-4 mr-2", reactivateAIMutation.isPending && "animate-spin")} />
+                              <Bot className={cn("w-3.5 h-3.5 mr-1", reactivateAIMutation.isPending && "animate-spin")} />
                               Reativar IA
                             </Button>
-                          )}
-                          {!selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento') && (
+                          ) : (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                              className="h-7 text-[10px] px-2 bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
                               onClick={() => {
                                 interveneChatMutation.mutate({
                                   id: selectedChatData.id,
@@ -1316,28 +1397,29 @@ const Atendimentos = () => {
                               }}
                               disabled={interveneChatMutation.isPending}
                             >
-                              <UserSearch className={cn("w-4 h-4 mr-2", interveneChatMutation.isPending && "animate-spin")} />
+                              <UserSearch className={cn("w-3.5 h-3.5 mr-1", interveneChatMutation.isPending && "animate-spin")} />
                               Intervir
                             </Button>
                           )}
                         </>
-                      )}
-                      {(selectedChatData.status || (selectedChatData as any).statusP) === 'concluido' && (
+                      ) : (
                         <>
                           <Button 
                             variant="outline" 
                             size="sm"
+                            className="h-7 text-[10px] px-2"
                             onClick={() => setViewMessagesForClosedChat(prev => ({...prev, [selectedChatData.id]: false}))}
                           >
-                            <FileText className="w-4 h-4 mr-2" />
+                            <FileText className="w-3.5 h-3.5 mr-1" />
                             Resumo
                           </Button>
                           <Button 
                             variant="outline" 
                             size="sm"
+                            className="h-7 text-[10px] px-2"
                             onClick={() => updateStatusMutation.mutate({ id: selectedChatData.id, status: 'active' })}
                           >
-                            <RotateCcw className="w-4 h-4 mr-2" />
+                            <RotateCcw className="w-3.5 h-3.5 mr-1" />
                             Reabrir
                           </Button>
                         </>
@@ -1367,47 +1449,45 @@ const Atendimentos = () => {
                     const durationText = diffMins < 60 ? `${diffMins} min` : `${Math.floor(diffMins/60)}h ${diffMins%60}min`;
 
                     return (
-                      <div className="absolute inset-0 z-30 bg-background/20 backdrop-blur-md flex items-center justify-center p-6">
-                        <Card className="w-full max-w-lg shadow-lg border-primary/20">
-                          <CardHeader className="text-center pb-2">
-                            <div className="mx-auto bg-primary/10 w-12 h-12 rounded-full flex items-center justify-center mb-3">
-                              <FileText className="w-6 h-6 text-primary" />
+                      <div className="absolute inset-0 z-30 flex items-center justify-center p-3">
+                        <Card className="w-full max-w-sm shadow-xl border-primary/20">
+                          <CardHeader className="text-center pb-1 pt-4">
+                            <div className="mx-auto bg-primary/10 w-8 h-8 rounded-full flex items-center justify-center mb-1.5">
+                              <FileText className="w-4 h-4 text-primary" />
                             </div>
-                            <CardTitle className="text-xl">Resumo do Atendimento</CardTitle>
+                            <CardTitle className="text-base">Resumo do Atendimento</CardTitle>
                           </CardHeader>
-                          <CardContent className="space-y-4">
-                            <div className="bg-muted/50 p-4 rounded-lg text-left">
-                              <h4 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center">
-                                <Bot className="w-4 h-4 mr-2" /> Resumo da IA
+                          <CardContent className="space-y-2 px-4 pb-4">
+                            <div className="bg-[#f8f9fa] p-2.5 rounded-lg text-left border border-border/50 max-h-28 overflow-y-auto">
+                              <h4 className="text-[10px] font-bold text-muted-foreground mb-1 flex items-center uppercase tracking-wider">
+                                <Bot className="w-3 h-3 mr-1 text-primary" /> Resumo da IA
                               </h4>
-                              <p className="text-sm leading-relaxed whitespace-pre-wrap">{summaryText}</p>
+                              <p className="text-[12px] leading-relaxed text-[#54656f] whitespace-pre-wrap">{summaryText}</p>
                             </div>
-                            
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="bg-muted/30 p-3 rounded-lg border border-border text-center">
-                                <span className="text-xs text-muted-foreground block mb-1">Duração</span>
-                                <span className="font-semibold">{durationText}</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="bg-muted/20 p-2 rounded-lg border border-border/40 text-center">
+                                <span className="text-[10px] text-muted-foreground block mb-0.5">Duração</span>
+                                <span className="font-semibold text-xs">{durationText}</span>
                               </div>
-                              <div className="bg-muted/30 p-3 rounded-lg border border-border text-center">
-                                <span className="text-xs text-muted-foreground block mb-1">Status</span>
-                                <Badge variant="outline" className="bg-success/10 text-success border-success/20">Concluído</Badge>
+                              <div className="bg-muted/20 p-2 rounded-lg border border-border/40 text-center flex flex-col items-center justify-center">
+                                <span className="text-[10px] text-muted-foreground block mb-0.5">Status</span>
+                                <Badge variant="outline" className="h-4 bg-success/5 text-success border-success/20 text-[9px] px-1 py-0">Concluído</Badge>
                               </div>
                             </div>
-
-                            <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-border">
+                            <div className="flex gap-2 pt-1 border-t border-border/50">
                               <Button 
-                                className="flex-1" 
+                                className="flex-1 h-7 text-[11px]" 
                                 variant="outline"
                                 onClick={() => setViewMessagesForClosedChat(prev => ({...prev, [selectedChatData.id]: true}))}
                               >
-                                <MessageSquare className="w-4 h-4 mr-2" />
-                                Visualizar
+                                <MessageSquare className="w-3 h-3 mr-1" />
+                                Ver Mensagens
                               </Button>
                               <Button 
-                                className="flex-1"
+                                className="flex-1 h-7 text-[11px]"
                                 onClick={() => updateStatusMutation.mutate({ id: selectedChatData.id, status: 'active' })}
                               >
-                                <RotateCcw className="w-4 h-4 mr-2" />
+                                <RotateCcw className="w-3 h-3 mr-1" />
                                 Reabrir
                               </Button>
                             </div>
@@ -1555,64 +1635,159 @@ const Atendimentos = () => {
                                 )
                               )}>
                                 {/* Renderizar conteúdo baseado no tipo */}
-                                {message.type === 'image' && message.media && (
-                                  <div className="mb-1 overflow-hidden rounded-md border border-black/5">
-                                    <img
-                                      src={message.media.url}
-                                      alt={message.media.name}
-                                      className="max-w-full h-auto cursor-pointer hover:opacity-95 transition-opacity max-h-[300px] object-contain"
-                                      onClick={() => window.open(message.media.url, '_blank')}
-                                    />
-                                  </div>
-                                )}
+                                {(() => {
+                                  // Filtrar conteúdo de placeholder ("file" ou vindo vazio)
+                                  const hasRichContent = message.content && message.content.toLowerCase() !== 'file' && message.content.trim() !== '';
 
-                                {message.type === 'video' && message.media && (
-                                  <div className="mb-1 overflow-hidden rounded-md border border-black/5 bg-black">
-                                    <video
-                                      src={message.media.url}
-                                      controls
-                                      className="max-w-full h-auto max-h-[300px] outline-none"
-                                    />
-                                  </div>
-                                )}
+                                  return (
+                                    <div className="flex flex-col gap-2">
+                                      {/* Se houver texto acompanhando a mídia */}
+                                      {hasRichContent && (
+                                        <p className="text-[14.2px] leading-[19px] whitespace-pre-wrap break-words">
+                                          {message.content}
+                                        </p>
+                                      )}
 
-                                {message.type === 'audio' && message.media ? (
-                                  <WhatsAppAudioPlayer url={message.media.url} />
-                                ) : message.type === 'document' && message.media ? (
-                                  /* Card de documento */
-                                  <div className="flex items-start gap-3 py-1">
-                                    <div className="flex-shrink-0 mt-0.5">
-                                      <div className={cn(
-                                        "w-10 h-10 rounded-lg flex items-center justify-center",
-                                        isClient ? "bg-red-100" : "bg-red-100"
-                                      )}>
-                                        <FileText className={cn(
-                                          "w-5 h-5",
-                                          isClient ? "text-red-600" : "text-red-600"
-                                        )} />
-                                      </div>
+                                      {/* Renderizar mídias */}
+                                      {message.type === 'image' && message.media && (
+                                        <div className="overflow-hidden rounded-md border border-black/5">
+                                          <img
+                                            src={message.media.url}
+                                            alt={message.media.name}
+                                            className="max-w-full h-auto cursor-pointer hover:opacity-95 transition-opacity max-h-[300px] object-contain"
+                                            onClick={() => window.open(message.media.url, '_blank')}
+                                          />
+                                        </div>
+                                      )}
+
+                                      {message.type === 'video' && message.media && (
+                                        <div className="overflow-hidden rounded-md border border-black/5 bg-black">
+                                          <video
+                                            src={message.media.url}
+                                            controls
+                                            className="max-w-full h-auto max-h-[300px] outline-none"
+                                          />
+                                        </div>
+                                      )}
+
+                                      {message.type === 'audio' && message.media && (
+                                        <WhatsAppAudioPlayer url={message.media.url} />
+                                      )}
+
+                                      {message.type === 'document' && message.media && (
+                                        <div className="flex items-start gap-3 py-1 bg-black/5 p-2 rounded-lg border border-black/5">
+                                          <div className="flex-shrink-0 mt-0.5">
+                                            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-red-100">
+                                              <FileText className="w-5 h-5 text-red-600" />
+                                            </div>
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-[14.2px] font-medium text-[#111b21] truncate mb-1">
+                                              {(() => {
+                                                const name = message.media.name || 'document';
+                                                const url = message.media.url || '';
+                                                // Se o nome não tem extensão (ex: .pdf, .jpg), tenta buscar na URL
+                                                if (!name.includes('.') && url.includes('.')) {
+                                                  const ext = url.split('.').pop()?.split('?')[0];
+                                                  if (ext && ext.length <= 4) return `${name}.${ext}`;
+                                                }
+                                                return name;
+                                              })()}
+                                            </p>
+                                            <a
+                                              href={message.media.url.trim()}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1.5 text-[12px] text-primary hover:underline"
+                                            >
+                                              <Download className="w-3.5 h-3.5" />
+                                              Abrir documento
+                                            </a>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Se for apenas texto (sem tipo de mídia mapeado mas com conteúdo) */}
+                                      {message.type !== 'image' && message.type !== 'video' && message.type !== 'audio' && message.type !== 'document' && (
+                                        <div>
+                                          {/* Já renderizado acima se hasRichContent for true */}
+                                          {!hasRichContent && message.content && (
+                                             <p className="text-[14.2px] leading-[19px] whitespace-pre-wrap break-words">{message.content}</p>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Detector de CPF nas mensagens */}
+                                      {(() => {
+                                        const cpfRegex = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/;
+                                        const cpfMatch = message.content ? message.content.match(cpfRegex) : null;
+                                        if (cpfMatch) {
+                                          const foundCpf = cpfMatch[0].replace(/\D/g, '');
+                                          const isLinked = cdClienteMK && chatMKMap[selectedChat]?.cliente;
+                                          const isThisCpfLinked = isLinked && (String(chatMKMap[selectedChat]?.cliente?.doc).replace(/\D/g, '') === foundCpf || chatMKMap[selectedChat]?.cliente?.doc === undefined);
+                                          
+                                          return (
+                                            <div className="pt-1">
+                                              <Button
+                                                variant={isThisCpfLinked ? "default" : "secondary"}
+                                                size="sm"
+                                                className={cn(
+                                                  "h-6 px-2 text-[9px] gap-1 transition-colors disabled:opacity-50",
+                                                  isThisCpfLinked 
+                                                    ? "bg-green-600 hover:bg-green-700 text-white border-green-700 shadow-sm"
+                                                    : "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20"
+                                                )}
+                                                disabled={searchMKLoading || isThisCpfLinked}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (isThisCpfLinked) return;
+                                                  
+                                                  setSearchMKLoading(true);
+                                                  toast.info(`Buscando ${foundCpf} no MKCloud...`);
+                                                  
+                                                  consultaDoc(foundCpf).then(r => {
+                                                    const arr = Array.isArray(r) ? r : r ? [r] : [];
+                                                    const first = arr[0];
+                                                    if (first) {
+                                                      const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? (first as any).CodigoPessoa ?? (first as any).CodPessoa ?? (first as any).id ?? '');
+                                                      const nome = String((first as any).nome ?? (first as any).NomePessoa ?? (first as any).nome_cliente ?? (first as any).Nome ?? (first as any).RazaoSocial ?? (first as any).Email ?? 'Desconhecido');
+                                                      
+                                                      toast.success(`Cliente ${nome || cd} encontrado!`);
+                                                      if (selectedChat) {
+                                                        setChatMKMap(prev => ({
+                                                          ...prev,
+                                                          [selectedChat]: { cd, cliente: first as MKClienteDoc }
+                                                        }));
+                                                        setShowMkPanel(true);
+                                                        window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
+                                                      }
+                                                    } else {
+                                                      toast.error(`CPF ${foundCpf} não localizado no MKCloud.`);
+                                                    }
+                                                  }).catch(err => {
+                                                    toast.error(`Falha MKCloud: ${err.message}`);
+                                                  }).finally(() => {
+                                                    setSearchMKLoading(false);
+                                                  });
+                                                }}
+                                              >
+                                                {searchMKLoading ? (
+                                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : isThisCpfLinked ? (
+                                                  <CheckCircle2 className="w-3 h-3" />
+                                                ) : (
+                                                  <UserSearch className="w-3 h-3" />
+                                                )}
+                                                {isThisCpfLinked ? "Cliente MK Identificado" : `CPF Identificado: ${cpfMatch[0]}`}
+                                              </Button>
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
                                     </div>
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-[14.2px] font-medium text-[#111b21] truncate mb-1">
-                                        {message.media.name}
-                                      </p>
-                                      <a
-                                        href={message.media.url.trim()}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-[12px] text-primary hover:underline"
-                                      >
-                                        <Download className="w-3.5 h-3.5" />
-                                        Abrir documento
-                                      </a>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  /* Conteúdo de texto normal */
-                                  <p className="text-[14.2px] leading-[19px] whitespace-pre-wrap break-words">
-                                    {message.content}
-                                  </p>
-                                )}
+                                  );
+                                })()}
 
                                 {/* Horário e status dentro do balão */}
                                 <div className={cn(
@@ -1770,10 +1945,11 @@ const Atendimentos = () => {
 
         {/* Painel resumo cliente MK (redimensionável e minimizável) */}
         <ClientSummaryPanel
-          open={!!cdClienteMK}
-          onClose={() => { setClienteMK(null); setCdClienteMK(null); }}
+          open={!!cdClienteMK && showMkPanel}
+          onClose={() => setShowMkPanel(false)}
           cliente={clienteMK}
           cdCliente={cdClienteMK}
+          conversationId={selectedChat}
         />
       </div>
     </Layout>

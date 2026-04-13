@@ -21,19 +21,19 @@ export const Layout = ({ children }: LayoutProps) => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col w-full">
+    <div className="h-screen overflow-hidden bg-background flex flex-col w-full">
       <Navbar 
         sidebarCollapsed={sidebarCollapsed} 
         onToggleSidebar={isMobile ? toggleMobileMenu : undefined}
       />
-      <div className="flex flex-1 relative">
+      <div className="flex flex-1 overflow-hidden relative">
         <Sidebar 
           collapsed={sidebarCollapsed} 
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           mobileOpen={mobileMenuOpen}
           onMobileClose={closeMobileMenu}
         />
-        <main className={`flex-1 p-4 sm:p-6 bg-background-secondary transition-all duration-300 ${
+        <main className={`flex-1 overflow-y-auto p-2 sm:p-4 lg:p-6 bg-background-secondary transition-all duration-300 ${
           isMobile ? 'w-full' : sidebarCollapsed ? 'ml-0' : 'ml-0'
         }`}>
           {children}

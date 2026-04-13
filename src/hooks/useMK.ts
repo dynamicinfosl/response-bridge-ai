@@ -1,12 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
-import type { MKClienteDoc, MKConsultaClientesParams } from '@/lib/mk-api';
+import type { 
+  MKClienteDoc, 
+  MKConsultaClientesParams,
+  MKInvoice,
+  MKContract,
+  MKConnection
+} from '@/lib/mk-api';
 import {
   consultaDoc,
   consultaNome,
   consultaClientes,
   faturasPendentes,
+  faturasPagas,
   contratosPorCliente,
   conexoesPorCliente,
+  historicoConexao,
+  processosAtendimento,
 } from '@/lib/mk-api';
 
 /** Lista clientes MK com filtros */
@@ -16,11 +25,11 @@ export function useClientesMK(params: MKConsultaClientesParams = {}, enabled = t
     queryFn: () => consultaClientes(params),
     enabled: enabled,
     staleTime: 60 * 1000,
-    retry: 0, // não repetir ao falhar (ex.: token ausente) para exibir erro logo
+    retry: 0,
   });
 }
 
-/** Cliente por CPF/CNPJ (normalizado para um único objeto ou primeiro do array) */
+/** Cliente por CPF/CNPJ */
 export function useClienteByDoc(doc: string | null, enabled = true) {
   return useQuery({
     queryKey: ['mk', 'cliente-doc', doc],
@@ -31,7 +40,7 @@ export function useClienteByDoc(doc: string | null, enabled = true) {
       return arr.length ? arr[0] : null;
     },
     enabled: enabled && !!doc?.trim(),
-    staleTime: 2 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -45,16 +54,19 @@ export function useClienteByNome(nome: string | null, enabled = true) {
       return Array.isArray(r) ? r : r ? [r] : [];
     },
     enabled: enabled && !!nome?.trim(),
-    staleTime: 2 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
-/** Resumo do cliente para o painel no atendimento: dados + faturas + contratos + conexões */
+/** Resumo do cliente para o painel: dados + faturas + contratos + conexões */
 export interface MKClienteResumo {
   cliente: MKClienteDoc | null;
-  faturas: { cd_fatura?: string; [key: string]: unknown }[];
-  contratos: { [key: string]: unknown }[];
-  conexoes: { [key: string]: unknown }[];
+  faturas: MKInvoice[];
+  faturas_pagas: MKInvoice[];
+  contratos: MKContract[];
+  conexoes: MKConnection[];
+  historico_conexao: MKConnection[];
+  processos: import('@/lib/mk-api').MKProcess[];
 }
 
 export function useClienteResumo(
@@ -65,17 +77,36 @@ export function useClienteResumo(
   return useQuery({
     queryKey: ['mk', 'cliente-resumo', cd_cliente],
     queryFn: async (): Promise<MKClienteResumo> => {
-      if (!cd_cliente) return { cliente: clienteBase || null, faturas: [], contratos: [], conexoes: [] };
-      const [fat, cont, conn] = await Promise.all([
+      if (!cd_cliente) return { cliente: clienteBase || null, faturas: [], faturas_pagas: [], contratos: [], conexoes: [], historico_conexao: [], processos: [] };
+      
+      // Busca detalhes completos do cliente se não tivermos
+      let fullCliente = clienteBase;
+      if (!fullCliente?.endereco_completo) {
+        try {
+          const results = await consultaClientes({ cd_cliente });
+          if (results.length) fullCliente = results[0];
+        } catch (e) {
+          console.error('Erro ao buscar detalhes do cliente MK:', e);
+        }
+      }
+
+      const [fat, fatPagas, cont, conn, histConn, proc] = await Promise.all([
         faturasPendentes(cd_cliente),
+        faturasPagas(cd_cliente),
         contratosPorCliente(cd_cliente),
         conexoesPorCliente(cd_cliente),
+        historicoConexao(cd_cliente),
+        processosAtendimento(cd_cliente)
       ]);
+
       return {
-        cliente: clienteBase || ({ cd_cliente } as MKClienteDoc),
+        cliente: fullCliente || clienteBase || ({ cd_cliente } as MKClienteDoc),
         faturas: fat,
+        faturas_pagas: fatPagas,
         contratos: cont,
         conexoes: conn,
+        historico_conexao: histConn,
+        processos: proc,
       };
     },
     enabled: enabled && !!cd_cliente,

@@ -2,7 +2,15 @@
  * Configuração MK Solutions (Adaptlink)
  * Tudo em um lugar: uma busca no Supabase (system_settings) traz URL e token.
  * Chaves: mk_base_url, mk_token. Se faltar no banco, usa .env (VITE_MK_BASE_URL, VITE_MK_TOKEN).
+ *
+ * GESTÃO DE TOKEN:
+ * - O token do MK expira a cada 48h.
+ * - O n8n renova o token a cada 24h e salva em system_settings (key: mk_token).
+ * - Cache local de 1h garante que pegamos o token renovado sem bater no banco em toda requisição.
+ * - Se a API retornar 401/403, o cache é invalidado e o token é re-buscado do Supabase automaticamente.
  */
+
+import { supabase } from './supabase';
 
 export interface MKConfig {
   baseUrl: string;
@@ -11,68 +19,46 @@ export interface MKConfig {
 
 const CACHE_KEY = 'mk_config_cache';
 const CACHE_EXPIRY_KEY = 'mk_config_cache_expiry';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 min
+const CACHE_DURATION = 60 * 60 * 1000; // 1 hora (token expira em 48h; n8n renova a cada 24h)
 const DB_TIMEOUT = 8000; // 8s
 
 let cached: MKConfig | null = null;
 
-/** Uma única query: busca URL e token do Supabase. */
 async function fetchMKConfigFromDB(): Promise<MKConfig | null> {
   if (typeof window === 'undefined') return null;
-  const { supabase } = await import('./supabase');
 
-  console.log('🔍 [MK Config] Buscando config no Supabase...');
+  try {
+    const data: any = await Promise.race([
+      supabase
+        .from('system_settings')
+        .select('key, value')
+        .in('key', ['mk_base_url', 'mk_token']),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout_MK_DB')), 2000)
+      )
+    ]);
 
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      console.warn('⏱️ [MK Config] Timeout após 8s - usando fallback .env');
-      resolve(null);
-    }, DB_TIMEOUT);
+    if (!data || data.error || !data.data) {
+      console.warn('[MK Config] Falha ao buscar no DB. Motivo:', data?.error?.message || 'Dados vazios');
+      return null;
+    }
 
-    supabase
-      .from('system_settings')
-      .select('key, value')
-      .in('key', ['mk_base_url', 'mk_token'])
-      .then(({ data, error }) => {
-        clearTimeout(timer);
-        if (error) {
-          console.error('❌ [MK Config] Erro ao buscar do Supabase:', error);
-          resolve(null);
-          return;
-        }
-        const rows = (data ?? []) as { key: string; value: string }[];
-        console.log('📊 [MK Config] Linhas retornadas:', rows.length);
-        console.log('   Dados:', rows);
-        
-        const map = Object.fromEntries(rows.map((r) => [r.key, r.value ?? '']));
-        const baseUrl = (map.mk_base_url ?? '').trim().replace(/\/$/, '');
-        const token = (map.mk_token ?? '').trim();
-        
-        console.log('🔧 [MK Config] Valores parseados:');
-        console.log(`   • mk_base_url: ${baseUrl || '(vazio)'}`);
-        console.log(`   • mk_token: ${token ? token.substring(0, 20) + '...' : '(vazio)'}`);
-        
-        if (baseUrl || token) {
-          const result = {
-            baseUrl: baseUrl || envBaseUrl(),
-            token: token || envToken(),
-          };
-          console.log('✅ [MK Config] Config montada:', {
-            baseUrl: result.baseUrl,
-            token: result.token ? result.token.substring(0, 20) + '...' : '(vazio)',
-          });
-          resolve(result);
-        } else {
-          console.warn('⚠️ [MK Config] Nenhum valor encontrado no Supabase - usando .env');
-          resolve(null);
-        }
-      })
-      .catch((err) => {
-        clearTimeout(timer);
-        console.error('❌ [MK Config] Erro na promise:', err);
-        resolve(null);
-      });
-  });
+    const rows = data.data as { key: string; value: string }[];
+    const map = Object.fromEntries(rows.map((r) => [r.key, r.value ?? '']));
+    const baseUrl = (map.mk_base_url ?? '').trim().replace(/\/$/, '');
+    const token = (map.mk_token ?? '').trim();
+
+    if (baseUrl || token) {
+      return {
+        baseUrl: baseUrl || envBaseUrl(),
+        token: token || envToken(),
+      };
+    }
+  } catch (err: any) {
+    console.warn('[MK Config] Exceção ao buscar DB:', err?.message || err);
+    return null;
+  }
+  return null;
 }
 
 function envBaseUrl(): string {
@@ -92,9 +78,6 @@ function resolveBaseUrl(baseUrl: string): string {
 }
 
 function getCached(): MKConfig | null {
-  // Só considera cache válido se tiver URL e token preenchidos.
-  // Importante: não "completar" com .env aqui, senão um cache antigo (ex.: token vazio)
-  // impede buscar o token novo no Supabase.
   if (cached?.token?.trim() && cached?.baseUrl?.trim()) return cached;
   if (typeof window === 'undefined') return null;
   try {
@@ -126,32 +109,36 @@ function setCache(config: MKConfig) {
 }
 
 /**
- * Retorna a configuração MK: uma única fonte.
- * Ordem: cache em memória → cache localStorage → Supabase (uma query) → .env.
+ * Retorna a configuração MK.
+ * Ordem: cache em memória → cache localStorage → Supabase → .env.
  */
 export async function getMKConfig(): Promise<MKConfig> {
-  console.log('🚀 [MK Config] getMKConfig() chamado');
+  console.log('[MK Config Debug] Chamando getMKConfig...');
   const fromCache = getCached();
   if (fromCache?.baseUrl?.trim() && fromCache?.token?.trim()) {
+    console.log('[MK Config Debug] Retornando do cache.');
     return {
       baseUrl: resolveBaseUrl(fromCache.baseUrl),
       token: fromCache.token,
     };
   }
 
+  console.log('[MK Config Debug] Cache vazio, chamando fetchMKConfigFromDB...');
   const fromDb = await fetchMKConfigFromDB();
+  console.log(`[MK Config Debug] fetchMKConfigFromDB retornou: ${fromDb ? 'Sucesso' : 'Falha'}`);
+  
   if (fromDb) {
     const resolved = {
       baseUrl: resolveBaseUrl(fromDb.baseUrl || envBaseUrl()),
       token: fromDb.token || envToken(),
     };
-    // Cacheia somente os valores “crus” (URL real, não /api/mk) + token.
     if (resolved.baseUrl || resolved.token) {
       setCache({ baseUrl: fromDb.baseUrl || envBaseUrl(), token: fromDb.token || envToken() });
     }
     return resolved;
   }
 
+  console.log('[MK Config Debug] Usando .env como fallback final.');
   const baseUrl = resolveBaseUrl(envBaseUrl());
   const token = envToken();
   const config: MKConfig = { baseUrl, token };
@@ -159,18 +146,21 @@ export async function getMKConfig(): Promise<MKConfig> {
   return config;
 }
 
-/** Atualiza apenas a base na resposta (para compat). */
 export async function getMKBaseUrl(): Promise<string> {
   const c = await getMKConfig();
   return c.baseUrl;
 }
 
-/** Atualiza apenas o token na resposta (para compat). */
 export async function getMKToken(): Promise<string> {
   const c = await getMKConfig();
   return c.token;
 }
 
+/**
+ * Invalida o cache do token.
+ * Chamada automaticamente pela mk-api.ts quando recebe 401/403,
+ * assim a próxima requisição busca o token renovado do Supabase.
+ */
 export function invalidateMKCache() {
   cached = null;
   try {

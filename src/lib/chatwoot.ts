@@ -13,12 +13,18 @@ async function chatwootFetch<T>(endpoint: string, options?: RequestInit): Promis
   const baseUrl = isDev ? `/api/chatwoot/api/v1/accounts/${ACCOUNT_ID}` : `${API_URL}/api/v1/accounts/${ACCOUNT_ID}`;
   const url = `${baseUrl}${endpoint}`;
 
+  const headers = {
+    ...getHeaders(),
+    ...options?.headers,
+  } as any;
+
+  if (options?.body instanceof FormData) {
+    delete headers['Content-Type'];
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      ...getHeaders(),
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -130,4 +136,16 @@ export const chatwootAPI = {
         private: private_msg,
       }),
     }),
+
+  sendAttachment: (conversationId: number, file: File, content: string = '') => {
+    const formData = new FormData();
+    formData.append('content', content);
+    formData.append('attachments[]', file, file.name || 'document.pdf');
+    formData.append('message_type', 'outgoing');
+
+    return chatwootFetch<ChatwootMessage>(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
 };
