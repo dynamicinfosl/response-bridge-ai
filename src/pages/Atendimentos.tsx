@@ -1717,6 +1717,16 @@ const Atendimentos = () => {
 
                         const isLastMessage = index === messages.length - 1;
 
+                        if (message.sender === 'activity') {
+                          return (
+                            <div key={message.id} ref={isLastMessage ? lastMessageRef : null} className="flex justify-center my-3">
+                              <div className="bg-[#f0f4f8]/80 text-[#8696a0] text-[11px] font-medium italic px-4 py-1.5 rounded-full text-center shadow-sm max-w-[85%] border border-[#e1e8ed]/60">
+                                {message.content}
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
                           <div
                             key={message.id}

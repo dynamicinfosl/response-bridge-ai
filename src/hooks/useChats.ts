@@ -4,6 +4,35 @@ import type { Chat, Message, SendMessagePayload } from '../lib/api';
 import { supabase } from '../lib/supabase';
 
 // Adaptadores para manter compatibilidade com a UI existente
+
+// Helper para traduzir mensagens internas do sistema sem expor o conceito de "etiquetas"
+const translateSystemMessage = (content: string): string => {
+  if (!content) return '';
+  const lower = content.toLowerCase();
+  
+  if (lower.includes(' adicionou ')) {
+    if (lower.includes('precisa_atendimento')) return 'Intervenção humana solicitada';
+    if (lower.includes('agente-off')) return 'Atendimento inteligente pausado';
+    return 'Configuração do atendimento atualizada';
+  }
+  
+  if (lower.includes(' removeu ')) {
+    if (lower.includes('precisa_atendimento')) return 'Alerta de intervenção encerrado';
+    if (lower.includes('agente-off')) return 'Atendimento inteligente reativado';
+    return 'Configuração do atendimento atualizada';
+  }
+  
+  if (lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
+    return 'Atendimento transferido de operador';
+  }
+  
+  if (lower.includes('marcado como resolvido') || lower.includes('marked as resolved')) {
+    return 'Atendimento finalizado com sucesso';
+  }
+  
+  return 'Ação do sistema registrada';
+};
+
 const mapChatwootToChat = (conv: any): Chat => {
   const contact = conv.contact || conv.meta?.sender || {};
   const phone = contact.phone_number || contact.phone || '';
@@ -29,8 +58,10 @@ const mapChatwootToChat = (conv: any): Chat => {
   const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
   let lastMsgContent = lastMsg?.content || '';
 
-  // Prepara preview textual baseado em anexos
-  if (lastMsg?.attachments?.length > 0) {
+  // Prepara preview textual baseado em anexos ou mensagens de sistema
+  if (lastMsg?.message_type === 2) {
+    lastMsgContent = translateSystemMessage(lastMsgContent);
+  } else if (lastMsg?.attachments?.length > 0) {
     const fileType = lastMsg.attachments[0].file_type || '';
     let prefix = '📄 Documento';
     if (fileType === 'image') prefix = '📷 Foto';
@@ -93,16 +124,26 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     };
   }
 
-  return {
-    id: msg.id.toString(),
-    chatId: msg.conversation_id.toString(),
-    content: msg.content,
-    sender: msg.message_type === 0 ? 'user' : 'agent',
-    type,
-    media,
-    timestamp: new Date(msg.created_at * 1000).toISOString(),
-    read: true,
-  };
+    // Define o sender. message_type === 2 indica mensagem de "Atividade" (sistema)
+    let finalSender: 'user' | 'agent' | 'activity' = msg.message_type === 0 ? 'user' : 'agent';
+    
+    // Processamento do texto para mensagens de Atividade do sistema
+    let finalContent = msg.content || '';
+    if (msg.message_type === 2) {
+      finalSender = 'activity';
+      finalContent = translateSystemMessage(finalContent);
+    }
+
+    return {
+      id: msg.id.toString(),
+      chatId: msg.conversation_id.toString(),
+      content: finalContent,
+      sender: finalSender,
+      type,
+      media,
+      timestamp: new Date(msg.created_at * 1000).toISOString(),
+      read: true,
+    };
 };
 
 export function useChats() {

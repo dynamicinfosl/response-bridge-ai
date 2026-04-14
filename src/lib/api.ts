@@ -108,7 +108,7 @@ export interface Message {
   id: string;
   chatId: string;
   content?: string;
-  sender: 'user' | 'agent';
+  sender: 'user' | 'agent' | 'activity';
   type?: 'text' | 'document' | 'audio' | 'image' | 'video';
   media?: {
     url: string;
