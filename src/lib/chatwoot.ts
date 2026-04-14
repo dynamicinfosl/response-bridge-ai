@@ -9,8 +9,8 @@ const getHeaders = () => ({
 });
 
 async function chatwootFetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const isDev = import.meta.env.MODE === 'development';
-  const baseUrl = isDev ? `/api/chatwoot/api/v1/accounts/${ACCOUNT_ID}` : `${API_URL}/api/v1/accounts/${ACCOUNT_ID}`;
+  // Sempre usa proxy /api/chatwoot para evitar CORS tanto em dev (Vite proxy) quanto em prod (Vercel serverless)
+  const baseUrl = `/api/chatwoot/api/v1/accounts/${ACCOUNT_ID}`;
   const url = `${baseUrl}${endpoint}`;
 
   const headers = {
@@ -86,6 +86,15 @@ export interface ChatwootMessage {
 export const chatwootAPI = {
   // Agents
   getAgents: () => chatwootFetch<ChatwootAgent[]>('/agents'),
+  createAgent: (email: string, name: string, role: 'agent' | 'administrator' = 'agent') =>
+    chatwootFetch('/agents', {
+      method: 'POST',
+      body: JSON.stringify({ email, name, role }),
+    }),
+  deleteAgent: (agentId: number) =>
+    chatwootFetch(`/agents/${agentId}`, {
+      method: 'DELETE',
+    }),
 
   // Labels
   getLabels: () => chatwootFetch<ChatwootLabel[]>('/labels'),

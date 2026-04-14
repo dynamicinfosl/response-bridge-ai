@@ -120,9 +120,8 @@ export function useChats() {
         // Criando requests via fetch direto para evitar problemas de Promise de bibliotecas
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-        const chatwootUrl = import.meta.env.MODE === 'development'
-          ? `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}/conversations?status=all`
-          : `${import.meta.env.VITE_CHATWOOT_API_URL}/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}/conversations?status=all`;
+        const chatwootUrl = `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}/conversations?status=all`;
+
 
         const chatwootFetch = fetch(chatwootUrl, {
           headers: {
@@ -137,12 +136,20 @@ export function useChats() {
             'Authorization': `Bearer ${anonKey}`,
             'Content-Type': 'application/json'
           }
-        }).then(res => res.json());
+        }).then(res => res.json().catch(() => []));
 
-        const [response, encerrados] = await Promise.race([
-          Promise.all([chatwootFetch, supabaseFetch]),
+        const escaladosFetch = fetch(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo`, {
+          headers: {
+            'apikey': anonKey,
+            'Authorization': `Bearer ${anonKey}`,
+            'Content-Type': 'application/json'
+          }
+        }).then(res => res.json().catch(() => []));
+
+        const [response, encerrados, escalados] = await Promise.race([
+          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch]),
           timeoutPromise
-        ]) as [any, any[]];
+        ]) as [any, any[], any[]];
 
         // console.log('✅ Resposta Fetch Raw resolvida!');
 
@@ -163,11 +170,21 @@ export function useChats() {
         const mapeados = conversations.map(conv => {
           const mappedChat = mapChatwootToChat(conv);
 
-          // Injetar resumo da IA quando a conversa estiver concluída e existir registro no banco
-          if (mappedChat.status === 'concluido' && encerrados && encerrados.length > 0) {
-            const enc = encerrados.find(e => e.id_conversa_chatwoot === mappedChat.id);
+          // Injetar resumo da IA quando a conversa estiver concluída
+          if (encerrados && encerrados.length > 0) {
+            const enc = encerrados.find((e: any) => e.id_conversa_chatwoot === mappedChat.id);
             if (enc && enc.mini_resumo) {
-              mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
+              if (mappedChat.status === 'concluido') {
+                mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
+              }
+            }
+          }
+          
+          // Injetar resumo de escalonamento para o popup
+          if (escalados && escalados.length > 0) {
+            const esc = escalados.find((e: any) => e.id_conversa_chatwoot === mappedChat.id);
+            if (esc && esc.mini_resumo && mappedChat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento')) {
+              mappedChat.escalationSummary = esc.mini_resumo;
             }
           }
 
@@ -301,6 +318,30 @@ export function useInterveneChat() {
       }
       
       return chatwootAPI.addLabel(Number(id), updatedLabels);
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['chats'] });
+      queryClient.invalidateQueries({ queryKey: ['messages', variables.id] });
+    },
+  });
+}
+
+export function useTakeOverChat() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
+      // Remove etiqueta de intervenção humana
+      const filteredLabels = (labels || []).filter(l => 
+        l.toLowerCase() !== 'precisa_atendimento'
+      );
+      
+      // Garante que a IA fique parada enquanto o humano atende
+      if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {
+        filteredLabels.push('agente-off');
+      }
+      
+      return chatwootAPI.addLabel(Number(id), filteredLabels);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
