@@ -235,6 +235,7 @@ export default function Colaboradores() {
   // ── CRUD ─────────────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
+    console.log('[handleCreate] Iniciando. form:', form);
     if (!form.email || !form.full_name) {
       toast({ title: 'Preencha email e nome', variant: 'destructive' });
       return;
@@ -242,35 +243,57 @@ export default function Colaboradores() {
     setSaving(true);
     try {
       const password = form.password || `Temp${Math.random().toString(36).slice(-8)}!`;
+      console.log('[handleCreate] Chamando RPC admin_create_user...');
 
-      // Usa RPC para criar usuário já confirmado (sem precisar de confirmação por email)
-      const { data: newUserId, error: rpcError } = await supabase.rpc('admin_create_user', {
-        user_email: form.email,
-        user_password: password,
-        user_name: form.full_name,
-        user_phone: form.phone || null,
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+      const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_create_user`, {
+        method: 'POST',
+        headers: {
+          'apikey': ANON_KEY,
+          'Authorization': `Bearer ${ANON_KEY}`, // Note: we are using anon key here. The function is SECURITY DEFINER so it will bypass RLS internally.
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          user_email: form.email,
+          user_password: password,
+          user_name: form.full_name,
+          user_phone: form.phone || null,
+        })
       });
 
-      if (rpcError) throw rpcError;
-      if (!newUserId) throw new Error('Usuário não criado');
+      console.log('[handleCreate] fetch RPC admin_create_user retornou status:', rpcRes.status);
+      
+      if (!rpcRes.ok) {
+        const errorText = await rpcRes.text();
+        throw new Error(`Falha ao criar usário (RPC): ${errorText}`);
+      }
+      
+      const newUserId = await rpcRes.json();
+
+      console.log('[handleCreate] RPC admin_create_user retornou newUserId:', newUserId);
+
+      if (!newUserId) throw new Error('Usuário não criado (retorno vazio)');
 
       const userId = newUserId as string;
+      console.log('[handleCreate] Iniciando sync com Chatwoot para userId:', userId);
 
       // 🔄 Sincronizar com Chatwoot
       let chatwootId: number | null = null;
       try {
         const cwRole = (form.role === 'master' || form.role === 'admin') ? 'administrator' : 'agent';
+        console.log('[handleCreate] Chamando chatwootAPI.createAgent...');
         const cwAgent = await chatwootAPI.createAgent(form.email, form.full_name, cwRole);
+        console.log('[handleCreate] Retorno Chatwoot:', cwAgent);
         chatwootId = cwAgent?.id || null;
       } catch (cwErr) {
         console.error('Falha ao sincronizar com Chatwoot:', cwErr);
-        toast({ title: 'Aviso', description: 'Usuário criado no sistema, mas houve erro ao cadastrar no Chatwoot.', variant: 'warning' as any });
+        toast({ title: 'Aviso', description: 'Usuário criado no sistema, mas houve erro ao cadastrar no Chatwoot.', variant: 'default' });
       }
 
+      console.log('[handleCreate] Iniciando fetch PATCH no Supabase...');
       // Update via fetch direto
-      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-      const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
         {
@@ -293,17 +316,23 @@ export default function Colaboradores() {
         }
       );
 
+      console.log('[handleCreate] Retorno PATCH Supabase - ok:', response.ok);
       if (!response.ok) {
-        console.warn('Update após criar falhou, mas auth user foi criado');
+        const txt = await response.text();
+        console.warn('Update após criar falhou, mas auth user foi criado. text:', txt);
       }
 
+      console.log('[handleCreate] Recarregando lista de colaboradores...');
       await load();
+      console.log('[handleCreate] Finalizado com sucesso');
       toast({ title: `Usuário criado! Senha: ${password}` });
       setCreateOpen(false);
       resetForm();
     } catch (err: any) {
-      toast({ title: 'Erro ao criar', description: err.message, variant: 'destructive' });
+      console.error('[handleCreate] CRITICAL ERROR Catch:', err);
+      toast({ title: 'Erro ao criar', description: err.message || JSON.stringify(err), variant: 'destructive' });
     } finally {
+      console.log('[handleCreate] Bloco FINALLY executando.');
       setSaving(false);
     }
   };
