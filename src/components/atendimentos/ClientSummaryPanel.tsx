@@ -25,10 +25,11 @@ import {
   Mail,
   Send,
   Download,
+  Router,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useClienteResumo } from '@/hooks/useMK';
-import { segundaViaFatura } from '@/lib/mk-api';
+import { segundaViaFatura, consultaConexaoAutenticada } from '@/lib/mk-api';
 import { chatwootAPI } from '@/lib/chatwoot';
 import type { MKClienteDoc, MKInvoice, MKContract, MKConnection } from '@/lib/mk-api';
 import { cn } from '@/lib/utils';
@@ -47,6 +48,7 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
   const [loadingFatura, setLoadingFatura] = useState<Record<string, boolean>>({});
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [loadingRouter, setLoadingRouter] = useState<Record<string, boolean>>({});
   const { data, isLoading, error } = useClienteResumo(cdCliente, cliente, open && !!cdCliente);
 
   useEffect(() => {
@@ -118,6 +120,19 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
     } finally {
       setLoadingFatura(p => ({ ...p, [cdFatura]: false }));
     }
+  };
+
+  const handleAccessRouter = async (conn: MKConnection) => {
+    // Tenta pegar o ID de todas as formas conhecidas que a API do MK possa retornar
+    const cd_conexao = conn.cd_conexao || (conn as any).codconexao || (conn as any).codigo || (conn as any).id;
+    if (!cd_conexao) {
+      toast.error("A conexão não possui um código válido. Informe o suporte.");
+      return;
+    }
+    
+    // Abre a aba imediatamente para o navegador não bloquear o popup
+    window.open(`/router-access?cd_conexao=${cd_conexao}`, '_blank');
+    toast.success("Abrindo painel do roteador em nova guia...");
   };
 
   const formatCurrency = (val: any) => {
@@ -787,7 +802,13 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                           <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px] gap-1.5" onClick={() => copyToClipboard(conn.username_conexao || '', 'Login')}>
                             <Copy className="w-3 h-3" /> Copiar Login
                           </Button>
-                          <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px] gap-1.5">
+                          <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px] gap-1.5"
+                                  onClick={() => handleAccessRouter(conn)}
+                                  disabled={loadingRouter[conn.cd_conexao]} >
+                            {loadingRouter[conn.cd_conexao] ? <Loader2 className="w-3 h-3 animate-spin"/> : <Router className="w-3 h-3" />}
+                            Acessar Roteador
+                          </Button>
+                          <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px] gap-1.5 hidden">
                             <RotateCcw className="w-3 h-3" /> Resetar
                           </Button>
                         </div>

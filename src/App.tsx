@@ -19,6 +19,7 @@ import TesteN8N from "./pages/TesteN8N";
 import Clientes from "./pages/Clientes";
 import Perfil from "./pages/Perfil";
 import NotFound from "./pages/NotFound";
+import RouterAccess from "./pages/RouterAccess";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import RoleProtectedRoute from "./components/auth/RoleProtectedRoute";
 
@@ -100,6 +101,7 @@ const App = () => (
                 <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
                 <Route path="/configuracoes-avancadas" element={<RoleProtectedRoute allowedRoles={['master']}><ConfiguracoesAvancadas /></RoleProtectedRoute>} />
                 <Route path="/teste-n8n" element={<ProtectedRoute><TesteN8N /></ProtectedRoute>} />
+                <Route path="/router-access" element={<RouterAccess />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

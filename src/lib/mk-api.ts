@@ -176,7 +176,7 @@ export function mapConnectionMK(raw: any): MKConnection {
   if (!raw || typeof raw !== 'object') return raw;
   return {
     ...raw,
-    cd_conexao: raw.cd_conexao ?? raw.cdconexao ?? raw.id ?? '',
+    cd_conexao: raw.cd_conexao ?? raw.codconexao ?? raw.codigo ?? raw.cdconexao ?? raw.id ?? '',
     username_conexao: raw.username_conexao ?? raw.login ?? raw.username ?? raw.conexao_login ?? raw.usuario ?? '',
     status_conexao: raw.status_conexao ?? raw.status ?? raw.situacao ?? raw.conexao_status ?? '',
     mac_address: raw.mac_address ?? raw.mac ?? raw.macaddress ?? raw.mac_atribuido ?? '',
@@ -366,5 +366,16 @@ export async function processosAtendimento(cd_cliente: string): Promise<MKProces
   } catch(err) {
      console.warn('API de Processos não disponível ou erro:', err);
      return [];
+  }
+}
+
+/** Consulta Conexão Autenticada (WSMKConsultaConexaoAutenticada) para pegar o IP do roteador */
+export async function consultaConexaoAutenticada(cd_conexao: string | number): Promise<any> {
+  try {
+    const raw = await mkFetch<any>('/mk/WSMKConsultaConexaoAutenticada.rule', { codconexao: String(cd_conexao), cd_conexao: String(cd_conexao) });
+    return raw;
+  } catch(err) {
+    console.error('Erro ao consultar conexão autenticada:', err);
+    throw err;
   }
 }

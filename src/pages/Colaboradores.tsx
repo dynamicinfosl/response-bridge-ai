@@ -78,10 +78,11 @@ interface Colaborador {
   supervisor_name?: string;
 }
 
+interface FormData {
   email: string;
   full_name: string;
   phone: string;
-  password: string;
+  password?: string;
   role: UserRole;
   area: UserArea;
   supervisor_id: string;

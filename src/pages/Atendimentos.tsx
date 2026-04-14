@@ -1124,6 +1124,7 @@ const Atendimentos = () => {
                               {(() => {
                                 const msg = chat.lastMessage || 'Iniciando conversa...';
                                 const isSummary = msg.includes('[Resumo IA]');
+                                const isActivity = chat.lastMessageSender === 'activity';
 
                                 if (isSummary) {
                                   const textAfter = msg.replace('[Resumo IA]', '').trim();
@@ -1144,6 +1145,16 @@ const Atendimentos = () => {
                                         )}>
                                           {textAfter || msg}
                                         </p>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (isActivity) {
+                                  return (
+                                    <div className="flex items-center gap-1.5 mb-2 overflow-hidden w-full">
+                                      <div className="bg-[#f0f4f8] text-[#8696a0] px-1.5 py-0.5 rounded text-[10px] font-medium italic border border-[#e1e8ed]/60 truncate max-w-full">
+                                        {msg}
                                       </div>
                                     </div>
                                   );
