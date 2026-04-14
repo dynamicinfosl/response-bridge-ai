@@ -174,7 +174,12 @@ export default function Colaboradores() {
       const rows: Colaborador[] = await response.json();
       console.log('🟢 [Colaboradores] Recebidos:', rows.length, 'users');
 
-      setColaboradores(rows);
+      // Proteção para não mostrar masters para quem não é master
+      const finalRows = currentUser?.role === 'master' 
+        ? rows 
+        : rows.filter(u => u.role !== 'master');
+
+      setColaboradores(finalRows);
     } catch (err: any) {
       console.error('🔴 [Colaboradores] Exceção:', err);
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
@@ -560,7 +565,9 @@ export default function Colaboradores() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas as roles</SelectItem>
-                  <SelectItem value="master">Master</SelectItem>
+                  {currentUser?.role === 'master' && (
+                    <SelectItem value="master">Master</SelectItem>
+                  )}
                   <SelectItem value="admin">Admin</SelectItem>
                   <SelectItem value="encarregado">Encarregado</SelectItem>
                   <SelectItem value="user">Usuário</SelectItem>
@@ -712,7 +719,9 @@ export default function Colaboradores() {
                     <SelectItem value="user">Usuário</SelectItem>
                     <SelectItem value="encarregado">Encarregado</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="master">Master</SelectItem>
+                    {currentUser?.role === 'master' && (
+                      <SelectItem value="master">Master</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -803,7 +812,9 @@ export default function Colaboradores() {
                     <SelectItem value="user">Usuário</SelectItem>
                     <SelectItem value="encarregado">Encarregado</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="master">Master</SelectItem>
+                    {currentUser?.role === 'master' && (
+                      <SelectItem value="master">Master</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
