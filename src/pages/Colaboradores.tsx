@@ -50,10 +50,13 @@ import {
   Users as UsersIcon,
   Building2,
   RefreshCw,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { chatwootAPI } from '@/lib/chatwoot';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +71,8 @@ interface Colaborador {
   area: UserArea | null;
   supervisor_id: string | null;
   avatar_url: string | null;
+  chatwoot_id: number | null;
+  password_plain?: string | null;
   created_at: string;
   supervisor_name?: string;
 }
@@ -129,6 +134,7 @@ export default function Colaboradores() {
   const [selected, setSelected] = useState<Colaborador | null>(null);
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const isMasterOrAdmin = currentUser?.role === 'master' || currentUser?.role === 'admin';
 
@@ -141,7 +147,7 @@ export default function Colaboradores() {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,role,area,supervisor_id,avatar_url,created_at&order=created_at.desc`;
+      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at&order=created_at.desc`;
       console.log('🔵 [Colaboradores] fetch URL:', url.substring(0, 80) + '...');
 
       const response = await fetch(url, {
@@ -203,7 +209,7 @@ export default function Colaboradores() {
     setForm({
       email:        u.email || '',
       full_name:    u.full_name || '',
-      password:     '',
+      password:     u.password_plain || '',
       role:         u.role || 'user',
       area:         (u.area as UserArea) || '',
       supervisor_id: u.supervisor_id || '',
@@ -232,23 +238,36 @@ export default function Colaboradores() {
     setSaving(true);
     try {
       const password = form.password || `Temp${Math.random().toString(36).slice(-8)}!`;
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: form.email,
-        password,
-        options: {
-          data: { full_name: form.full_name, role: form.role },
-          emailRedirectTo: undefined,
-        },
+
+      // Usa RPC para criar usuário já confirmado (sem precisar de confirmação por email)
+      const { data: newUserId, error: rpcError } = await supabase.rpc('admin_create_user', {
+        user_email: form.email,
+        user_password: password,
+        user_name: form.full_name,
       });
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('Usuário não criado');
+
+      if (rpcError) throw rpcError;
+      if (!newUserId) throw new Error('Usuário não criado');
+
+      const userId = newUserId as string;
+
+      // 🔄 Sincronizar com Chatwoot
+      let chatwootId: number | null = null;
+      try {
+        const cwRole = (form.role === 'master' || form.role === 'admin') ? 'administrator' : 'agent';
+        const cwAgent = await chatwootAPI.createAgent(form.email, form.full_name, cwRole);
+        chatwootId = cwAgent?.id || null;
+      } catch (cwErr) {
+        console.error('Falha ao sincronizar com Chatwoot:', cwErr);
+        toast({ title: 'Aviso', description: 'Usuário criado no sistema, mas houve erro ao cadastrar no Chatwoot.', variant: 'warning' as any });
+      }
 
       // Update via fetch direto
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?id=eq.${authData.user.id}`,
+        `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
         {
           method: 'PATCH',
           headers: {
@@ -262,6 +281,8 @@ export default function Colaboradores() {
             area:         form.area || null,
             supervisor_id: form.supervisor_id || null,
             full_name:    form.full_name,
+            chatwoot_id:  chatwootId,
+            password_plain: password,
           }),
         }
       );
@@ -270,12 +291,45 @@ export default function Colaboradores() {
         console.warn('Update após criar falhou, mas auth user foi criado');
       }
 
+      await load();
       toast({ title: `Usuário criado! Senha: ${password}` });
       setCreateOpen(false);
       resetForm();
-      load();
     } catch (err: any) {
       toast({ title: 'Erro ao criar', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSyncChatwoot = async (u: Colaborador) => {
+    setSaving(true);
+    try {
+      const cwRole = (u.role === 'master' || u.role === 'admin') ? 'administrator' : 'agent';
+      const cwAgent = await chatwootAPI.createAgent(u.email, u.full_name || u.email, cwRole);
+      
+      if (cwAgent?.id) {
+        const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+        const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/users?id=eq.${u.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'apikey': ANON_KEY,
+              'Authorization': `Bearer ${ANON_KEY}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({ chatwoot_id: cwAgent.id }),
+          }
+        );
+        toast({ title: 'Sincronizado com sucesso!' });
+        load();
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro na sincronização', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -293,6 +347,7 @@ export default function Colaboradores() {
         role:         form.role,
         area:         form.area || null,
         supervisor_id: form.supervisor_id || null,
+        password_plain: form.password,
       };
 
       const response = await fetch(
@@ -314,10 +369,27 @@ export default function Colaboradores() {
         throw new Error(errText || `HTTP ${response.status}`);
       }
 
+      // 🔐 Se a senha foi preenchida, altera a senha real de login via RPC
+      if (form.password) {
+        const { error: rpcError } = await supabase.rpc('admin_change_user_password', {
+          target_user_id: selected.id,
+          new_password: form.password
+        });
+        
+        if (rpcError) {
+          console.error('Erro ao mudar senha real:', rpcError);
+          toast({ 
+            title: 'Aviso', 
+            description: 'Dados salvos, mas houve um erro ao atualizar a senha real de login.', 
+            variant: 'warning' as any 
+          });
+        }
+      }
+
+      await load();
       toast({ title: 'Salvo com sucesso!' });
       setEditOpen(false);
       resetForm();
-      load();
     } catch (err: any) {
       toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
     } finally {
@@ -329,6 +401,15 @@ export default function Colaboradores() {
     if (!selected) return;
     setSaving(true);
     try {
+      // 🔄 Remover do Chatwoot se existir ID
+      if (selected.chatwoot_id) {
+        try {
+          await chatwootAPI.deleteAgent(selected.chatwoot_id);
+        } catch (cwErr) {
+          console.error('Falha ao remover do Chatwoot:', cwErr);
+        }
+      }
+
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -518,6 +599,11 @@ export default function Colaboradores() {
                           <DropdownMenuItem onClick={() => openEdit(u)}>
                             <Edit className="w-4 h-4 mr-2" /> Editar
                           </DropdownMenuItem>
+                          {!u.chatwoot_id && (
+                            <DropdownMenuItem onClick={() => handleSyncChatwoot(u)}>
+                              <RefreshCw className="w-4 h-4 mr-2" /> Sincronizar Chatwoot
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
@@ -553,8 +639,29 @@ export default function Colaboradores() {
               <Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Nome do colaborador" />
             </div>
             <div className="space-y-1">
-              <Label>Senha Temporária</Label>
-              <Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Deixe vazio para senha aleatória" />
+              <Label>Senha</Label>
+              <div className="relative">
+                <Input 
+                  type={showPassword ? "text" : "password"} 
+                  value={form.password} 
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))} 
+                  placeholder="Deixe vazio para senha aleatória" 
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -617,6 +724,31 @@ export default function Colaboradores() {
             <div className="space-y-1">
               <Label>Nome Completo *</Label>
               <Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Nome do colaborador" />
+            </div>
+            <div className="space-y-1">
+              <Label>Senha</Label>
+              <div className="relative">
+                <Input 
+                  type={showPassword ? "text" : "password"} 
+                  value={form.password} 
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))} 
+                  placeholder="Nova senha" 
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

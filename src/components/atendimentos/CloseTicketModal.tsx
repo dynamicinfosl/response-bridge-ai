@@ -46,12 +46,19 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
 // ...
 
   const handleClose = async () => {
+    if (!summary.trim()) {
+      toast({
+        title: "Resumo Obrigatório",
+        description: "Por favor, descreva o atendimento para poder finalizar.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsClosing(true);
     try {
-      // 1. Enviar o resumo como uma nota privada no Chatwoot (apenas se preenchido)
-      if (summary.trim()) {
-        await chatwootAPI.sendMessage(Number(chatId), `Resumo Manual:\n${summary}`, true);
-      }
+      // 1. Enviar o resumo como uma nota privada no Chatwoot
+      await chatwootAPI.sendMessage(Number(chatId), `Resumo Manual:\n${summary}`, true);
 
       // 2. Mudar status para resolvido
       await closeChatMutation.mutateAsync({ id: chatId });
@@ -126,16 +133,20 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
             </div>
           </div>
 
-          {/* Summary */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Resumo do Atendimento (Opcional):</label>
+              <label className="text-sm font-medium">
+                Resumo do Atendimento <span className="text-destructive">*</span>
+              </label>
+              <Badge variant="outline" className="text-[10px] uppercase font-bold text-destructive border-destructive/20 bg-destructive/5">
+                Obrigatório
+              </Badge>
             </div>
             <Textarea
-              placeholder="Opcional: Descreva como o problema foi resolvido. Deixe em branco para a IA gerar automaticamente pelo fluxo normal..."
+              placeholder="Descreva detalhadamente como o problema foi resolvido. Este campo é obrigatório para o encerramento do ticket."
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              className="min-h-24"
+              className={`min-h-24 ${!summary.trim() ? 'border-destructive/30 focus-visible:ring-destructive' : ''}`}
             />
           </div>
 
@@ -158,8 +169,8 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
           </Button>
           <Button
             onClick={handleClose}
-            disabled={isClosing}
-            className="bg-gradient-primary hover:shadow-primary text-white"
+            disabled={isClosing || !summary.trim()}
+            className="bg-gradient-primary hover:shadow-primary text-white disabled:opacity-50"
           >
             {isClosing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
             Finalizar Atendimento

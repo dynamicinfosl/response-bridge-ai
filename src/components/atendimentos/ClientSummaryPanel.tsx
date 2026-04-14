@@ -191,6 +191,8 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
     return String(parsed || 'N/A');
   };
 
+
+
   return (
     <Card
       className={cn(
@@ -235,10 +237,12 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                   <Badge variant="secondary" className="text-[10px]">Cód: {cdCliente}</Badge>
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="h-7 text-[10px] gap-1" onClick={() => window.open(`https://mk.adaptlink.com.br/`, '_blank')}>
-                <ExternalLink className="w-3 h-3" />
-                Abrir MK
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-[10px] gap-1" onClick={() => window.open(`https://mk.adaptlink.com.br/`, '_blank')}>
+                  <ExternalLink className="w-3 h-3" />
+                  Abrir MK
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -256,12 +260,10 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                 <FileStack className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Contratos</span>
               </TabsTrigger>
-              {/* Chamados ocultos temporariamente - API retornando categorias em vez de chamados reais
               <TabsTrigger value="support" className="text-xs gap-1.5 capitalize px-3 overflow-visible whitespace-nowrap shrink-0" title="Suporte">
                 <FileText className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Chamados</span>
               </TabsTrigger>
-              */} 
               <TabsTrigger value="tech" className="text-xs gap-1.5 capitalize px-3 overflow-visible whitespace-nowrap shrink-0" title="Conexões">
                 <Wifi className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Conexões</span>
@@ -486,54 +488,188 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="w-8 h-8 animate-spin text-primary" />
                   </div>
-                ) : data?.contratos?.length ? (
-                  <div className="space-y-3 pt-2">
-                    {data.contratos.map((c: any, i: number) => {
-                      const cdContrato = c.cd_contrato || c.codcontrato || c.id || i;
-                      const plano = c.plano_acesso || c.descricao || c.nome_plano || c.plano || 'Plano não identificado';
-                      const status = c.status || c.situacao; // removed 'Desconhecido' fallback to hide badge if empty
-                      const valor = c.valor_contrato || c.valor || c.mensalidade;
-                      const vencimento = c.dia_vencimento || c.vencimento;
-                      
-                      return (
-                        <div key={cdContrato} className="p-3 rounded-lg border bg-muted/30 space-y-2">
-                          <div className="flex justify-between items-start">
-                            <div className="min-w-0">
-                              <p className="font-bold text-sm text-foreground truncate">{plano}</p>
-                              <p className="text-[10px] text-muted-foreground uppercase">Contrato #{cdContrato}</p>
-                            </div>
-                            {status && (
-                              <Badge className={cn(
-                                "h-5 text-[9px] uppercase font-bold",
-                                status?.toLowerCase().includes('ativ') || status?.toLowerCase().includes('ok') ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                              )}>
-                                {status}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-[11px]">
-                            {valor != null && (
-                              <div className="flex items-center gap-1.5 text-muted-foreground">
-                                <CreditCard className="w-3.5 h-3.5" /> {formatCurrency(valor)}
-                              </div>
-                            )}
-                            {vencimento != null && (
-                              <div className="flex items-center gap-1.5 text-muted-foreground">
-                                <Calendar className="w-3.5 h-3.5" /> Dia {vencimento}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
                 ) : (
-                  <p className="text-center py-12 text-sm text-muted-foreground">Nenhum contrato encontrado.</p>
+                  <div className="space-y-4 pt-2">
+                    {/* Data de Entrada na Empresa */}
+                    {(() => {
+                      const c = (data?.cliente || cliente || {}) as any;
+                      // Busca nos campos prováveis que o MK retorna
+                      const clienteDesde = c.cliente_desde || c.data_cadastro || c.dt_cadastro || c.criado_em || c.DataCadastro;
+                      if (clienteDesde) {
+                        return (
+                          <div className="flex items-center gap-2 p-3 bg-primary/5 rounded-lg border border-primary/10">
+                            <Calendar className="w-4 h-4 text-primary" />
+                            <span className="text-xs font-medium text-foreground">
+                              Cliente na empresa desde: <strong className="text-primary">{formatDate(clienteDesde)}</strong>
+                            </span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    {/* Contratos */}
+                    <div>
+                      <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Contratos Ativos e Inativos</h4>
+                      {data?.contratos?.length ? (
+                        <div className="space-y-3">
+                          {data.contratos.map((c: any, i: number) => {
+                            const cdContrato = c.cd_contrato || c.codcontrato || c.id || i;
+                            const plano = c.plano_acesso || c.descricao || c.nome_plano || c.plano || 'Plano não identificado';
+                            const status = c.status || c.situacao;
+                            const valor = c.valor_contrato || c.valor || c.mensalidade;
+                            
+                            // Datas de Adesão e Expiração/Cancelamento/Vencimento
+                            const adesao = c.data_contratacao || c.data_adesao || c.adesao || c.dt_ativacao || c.data_ativacao;
+                            const fim = c.previsao_vencimento || c.vencimento_contrato || c.data_cancelamento || c.dt_cancelamento || c.data_vencimento || c.dt_vencimento || c.vencimento_plano;
+                            
+                            let diffDays = null;
+                            if (fim) {
+                              let d = new Date(fim);
+                              if (typeof fim === 'string' && fim.includes('/') && fim.split('/').length === 3) {
+                                 const parts = fim.split(' ')[0].split('/');
+                                 d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+                              }
+                              if (!isNaN(d.getTime())) {
+                                const now = new Date();
+                                now.setHours(0,0,0,0);
+                                diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                              }
+                            }
+                            
+                            return (
+                              <div key={cdContrato} className="p-3 rounded-lg border bg-muted/30 space-y-3">
+                                <div className="flex justify-between items-start">
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-sm text-foreground truncate">{plano}</p>
+                                    <p className="text-[10px] text-muted-foreground uppercase">Contrato #{cdContrato}</p>
+                                  </div>
+                                  {status && (
+                                    <Badge className={cn(
+                                      "h-5 text-[9px] uppercase font-bold",
+                                      status?.toLowerCase().includes('ativ') || status?.toLowerCase().includes('ok') ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                    )}>
+                                      {status}
+                                    </Badge>
+                                  )}
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-2 text-[11px] bg-background border border-border/50 p-2 rounded">
+                                  {adesao && (
+                                    <div className="space-y-0.5">
+                                      <span className="text-[9px] uppercase font-bold text-muted-foreground">Adesão / Ativação</span>
+                                      <p className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3 text-muted-foreground" /> {formatDate(adesao)}</p>
+                                    </div>
+                                  )}
+                                  {fim && (
+                                    <div className="space-y-0.5">
+                                      <span className="text-[9px] uppercase font-bold text-muted-foreground">Vencimento / Fim</span>
+                                      <div className="flex flex-col gap-1 mt-0.5">
+                                        <p className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3 text-red-400" /> {formatDate(fim)}</p>
+                                        {diffDays != null && (
+                                          <Badge variant={diffDays < 0 ? "destructive" : diffDays <= 60 ? "warning" : "outline"} className={cn(
+                                            "w-fit text-[9px] h-5 px-1.5 font-bold",
+                                            diffDays >= 0 && diffDays <= 60 ? "bg-amber-100 text-amber-800 border-amber-300" : ""
+                                          )}>
+                                            {diffDays < 0 ? `Vencido há ${Math.abs(diffDays)} dias` : diffDays === 0 ? "Vence hoje!" : `Vence em ${diffDays} dias`}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {valor != null && (
+                                    <div className="space-y-0.5 col-span-2">
+                                      <span className="text-[9px] uppercase font-bold text-muted-foreground">Valor</span>
+                                      <p className="flex items-center gap-1 text-muted-foreground"><CreditCard className="w-3 h-3" /> {formatCurrency(valor)}</p>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Conexões atreladas ao contrato */}
+                                {(() => {
+                                  // Tentar verificar conexões atuais/históricas que pertenceriam a esse contrato
+                                  const conexoes = [...(data?.conexoes || []), ...(data?.historico_conexao || [])];
+                                  const connsUnique = Array.from(new Map(conexoes.map((item: any) => [item.username_conexao || item.login || item.cd_conexao, item])).values());
+                                  
+                                  const connRelacionadas = (connsUnique as any[]).filter((conn: any) => 
+                                    String(conn.cd_contrato) === String(cdContrato) || 
+                                    String(conn.codcontrato) === String(cdContrato) || 
+                                    String(conn.cod_contrato) === String(cdContrato)
+                                  );
+
+                                  // Se tivermos conexões que vinculam explicitamente...
+                                  if (connRelacionadas.length) {
+                                    return (
+                                      <div className="pt-2 flex flex-wrap gap-1">
+                                        {connRelacionadas.map((conn: any, k: number) => {
+                                          const statusConn = String(conn.status_conexao || conn.situacao || conn.status || '').toLowerCase();
+                                          const isAtiva = statusConn.includes('ativ') || statusConn.includes('on') || statusConn.includes('conect') || statusConn === 'a' || statusConn === 'c';
+                                          return (
+                                            <Badge key={k} variant="secondary" className={cn(
+                                              "text-[9px] font-mono whitespace-nowrap bg-background border",
+                                              isAtiva ? "border-green-200" : "border-muted"
+                                            )}>
+                                              <div className={cn("w-1.5 h-1.5 rounded-full mr-1", isAtiva ? "bg-green-500" : "bg-muted-foreground")} />
+                                              {conn.username_conexao || conn.login || 'Conn'}
+                                            </Badge>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-center py-6 text-sm text-muted-foreground bg-muted/10 rounded border border-dashed">Nenhum contrato encontrado.</p>
+                      )}
+                    </div>
+
+                    {/* Histórico / Todas conexões globais */}
+                    <div>
+                      <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Histórico de Conexões (Geral)</h4>
+                      {data?.historico_conexao?.length || data?.conexoes?.length ? (
+                        <div className="bg-muted/10 p-2 rounded-lg border text-[10px]">
+                          <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                            {(() => {
+                              const todas = [...(data?.conexoes || []), ...(data?.historico_conexao || [])];
+                              // Remove duplicadas agrupando por login
+                              const unique = Array.from(new Map(todas.map((item: any) => [item.username_conexao || item.login || item.cd_conexao || Math.random(), item])).values());
+                              
+                              return unique.map((conn: any, i: number) => {
+                                const status = String(conn.status_conexao || conn.situacao || conn.status || '').toLowerCase();
+                                const isAtiva = status.includes('ativ') || status.includes('on') || status.includes('conect') || status === 'a' || status === 'c';
+                                return (
+                                  <li key={i} className="flex flex-col gap-0.5 p-1.5 border-b border-border/40 last:border-0 hover:bg-background rounded transition-colors">
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-mono font-medium flex items-center gap-1 text-foreground">
+                                        <div className={cn("w-1.5 h-1.5 rounded-full", isAtiva ? "bg-green-500" : "bg-muted-foreground")} />
+                                        {conn.username_conexao || conn.login || conn.username || 'S/ Login'}
+                                      </span>
+                                      {conn.data_hora_inicio && <span className="text-muted-foreground italic truncate max-w-[90px] text-right">Início: {formatDate(conn.data_hora_inicio)}</span>}
+                                    </div>
+                                    <div className="flex justify-between text-muted-foreground text-[8px] sm:text-[9px]">
+                                      <span>MAC: {conn.mac_address || conn.mac || conn.mac_atribuido || '—'}</span>
+                                      {(conn.cod_contrato || conn.cd_contrato) && <span>Contrato #{conn.cod_contrato || conn.cd_contrato}</span>}
+                                    </div>
+                                  </li>
+                                );
+                              });
+                            })()}
+                          </ul>
+                        </div>
+                      ) : (
+                         <p className="text-center py-2 text-[10px] text-muted-foreground italic">Nenhum histórico de conectividade.</p>
+                      )}
+                    </div>
+                  </div>
                 )}
               </ScrollArea>
             </TabsContent>
 
-            {/* Conteúdo de Chamados oculto temporariamente 
             <TabsContent value="support" className="flex-1 min-h-0 mt-2">
               <ScrollArea className="h-full px-4 pb-4">
                 {isLoading ? (
@@ -596,7 +732,6 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                 )}
               </ScrollArea>
             </TabsContent>
-            */}
 
             <TabsContent value="tech" className="flex-1 min-h-0 mt-2">
               <ScrollArea className="h-full px-4 pb-4">

@@ -101,6 +101,7 @@ export interface Chat {
   updatedAt?: string;
   labels?: string[];
   assigneeId?: number;
+  escalationSummary?: string;
 }
 
 export interface Message {

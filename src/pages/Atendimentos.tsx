@@ -30,11 +30,12 @@ import {
   Play,
   Pause,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat } from '@/hooks/useChats';
+import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat, useTakeOverChat } from '@/hooks/useChats';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Loader2 } from 'lucide-react';
@@ -159,6 +160,7 @@ const Atendimentos = () => {
   // Painel resumo cliente MK - Gerenciamento por chat para evitar vazamento de dados
   const [showBuscarClienteMK, setShowBuscarClienteMK] = useState(false);
   const [showMkPanel, setShowMkPanel] = useState(false);
+  const [suggestedMessage, setSuggestedMessage] = useState<string | null>(null);
   const [chatMKMap, setChatMKMap] = useState<Record<string, { cd: string; cliente: MKClienteDoc }>>({});
   
   // Identidade derivada do chat selecionado
@@ -191,9 +193,43 @@ const Atendimentos = () => {
   const updateStatusMutation = useUpdateChatStatus();
   const reactivateAIMutation = useReactivateAI();
   const interveneChatMutation = useInterveneChat();
+  const takeOverChatMutation = useTakeOverChat();
   
   // Hook para dados rápidos do MK no cabeçalho
   const { data: mkSummaryData, isLoading: mkSummaryLoading } = useClienteResumo(cdClienteMK, clienteMK, !!cdClienteMK);
+
+  // Cálculo global de Previsão de Vencimento de Contrato para o cabeçalho (<= 60 dias)
+  const soonestExpiringMKHeader = (() => {
+    if (!mkSummaryData?.contratos) return null;
+    let result: { diffDays: number; fim: string } | null = null;
+    
+    mkSummaryData.contratos.forEach((c: any) => {
+      const status = String(c.status || c.situacao || '').toLowerCase();
+      const isActive = status === '' || status.includes('ativ') || status.includes('ok') || status.includes('norm');
+      if (!isActive) return;
+
+      const fim = c.previsao_vencimento || c.vencimento_contrato || c.data_cancelamento || c.dt_cancelamento || c.data_vencimento || c.dt_vencimento || c.vencimento_plano;
+      if (fim) {
+        let d = new Date(fim);
+        if (typeof fim === 'string' && fim.includes('/') && fim.split('/').length === 3) {
+           const parts = fim.split(' ')[0].split('/');
+           d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+        }
+        if (!isNaN(d.getTime())) {
+          const now = new Date();
+          now.setHours(0,0,0,0);
+          const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (diffDays <= 60) {
+            if (!result || diffDays < result.diffDays) {
+               result = { diffDays, fim };
+            }
+          }
+        }
+      }
+    });
+    return result;
+  })();
 
   const { user } = useAuth();
   
@@ -229,6 +265,7 @@ const Atendimentos = () => {
     if (selectedChat) {
       markAsReadMutation.mutate(selectedChat);
       setShowMkPanel(false); // Fecha o painel ao trocar de chat
+      setSuggestedMessage(null); // Limpa as sugestões de mensagens
     }
   }, [selectedChat]);
 
@@ -770,6 +807,7 @@ const Atendimentos = () => {
     lastMessageSignatureRef.current = null;
     setShowScrollButton(false);
     setNewMessageCount(0);
+    setSuggestedMessage(null);
     setTimeout(() => scrollToBottom(false), 300);
   }, [selectedChat]);
 
@@ -782,6 +820,7 @@ const Atendimentos = () => {
         labels: selectedChatData?.labels
       });
       setMessageText('');
+      setSuggestedMessage(null);
       // Scroll automático após enviar mensagem
       setTimeout(() => {
         scrollToBottom(true);
@@ -1284,9 +1323,26 @@ const Atendimentos = () => {
                                 })()}
 
                                 {/* Suspensão */}
+                                {/* Suspensão */}
                                 {mkSummaryData.contratos.some(c => c.status?.toLowerCase().includes('suspenso')) && (
                                   <Badge className="px-1 py-0 text-[9px] bg-red-600 text-white font-bold uppercase border-none cursor-pointer">
                                     Suspenso
+                                  </Badge>
+                                )}
+
+                                {/* Vencimento de Contrato */}
+                                {soonestExpiringMKHeader && (
+                                  <Badge variant={soonestExpiringMKHeader.diffDays < 0 ? "destructive" : "warning"} className={cn(
+                                    "px-1 py-0 text-[10px] border-none font-bold animate-in fade-in slide-in-from-left-2 duration-300",
+                                    soonestExpiringMKHeader.diffDays >= 0 ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : ""
+                                  )}>
+                                    <AlertCircle className="w-3 h-3 mr-1" />
+                                    {soonestExpiringMKHeader.diffDays < 0 
+                                      ? `Contrato do cliente venceu há ${Math.abs(soonestExpiringMKHeader.diffDays)} dias`
+                                      : soonestExpiringMKHeader.diffDays === 0 
+                                        ? 'Contrato do cliente vence hoje!' 
+                                        : `Contrato do cliente irá vencer em ${soonestExpiringMKHeader.diffDays} dias`
+                                    }
                                   </Badge>
                                 )}
                               </div>
@@ -1319,33 +1375,33 @@ const Atendimentos = () => {
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-1.5 flex-wrap md:justify-end">
-                      <Button
-                        variant={cdClienteMK ? "default" : "outline"}
-                        size="sm"
-                        className={cn(
-                          "h-auto py-1 text-[10px] px-2 flex flex-col items-center justify-center text-center",
-                          cdClienteMK ? "bg-green-600 hover:bg-green-700 text-white border-green-700 shadow-sm" : ""
-                        )}
-                        onClick={() => { 
-                          if (cdClienteMK) {
-                            setShowMkPanel(true);
-                            // Caso já estivesse aberto mas minimizado
-                            window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
-                          } else {
-                            setSearchMKError(null); 
-                            setShowBuscarClienteMK(true); 
-                          }
-                        }}
-                      >
-                        <div className="flex items-center">
-                          {cdClienteMK ? <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> : <UserSearch className="w-3.5 h-3.5 mr-1" />}
-                          <span className="font-semibold">{cdClienteMK ? "Cliente MK" : "Cliente MK"}</span>
-                        </div>
-                        {cdClienteMK && (
-                          <span className="text-[8px] opacity-90 -mt-0.5 font-medium">Identificado</span>
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-1.5 flex-wrap md:justify-end">
+                        <Button
+                          variant={cdClienteMK ? "default" : "outline"}
+                          size="sm"
+                          className={cn(
+                            "h-auto py-1 text-[10px] px-2 flex flex-col items-center justify-center text-center",
+                            cdClienteMK ? "bg-green-600 hover:bg-green-700 text-white border-green-700 shadow-sm" : ""
+                          )}
+                          onClick={() => { 
+                            if (cdClienteMK) {
+                              setShowMkPanel(true);
+                              // Caso já estivesse aberto mas minimizado
+                              window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
+                            } else {
+                              setSearchMKError(null); 
+                              setShowBuscarClienteMK(true); 
+                            }
+                          }}
+                        >
+                          <div className="flex items-center">
+                            {cdClienteMK ? <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> : <UserSearch className="w-3.5 h-3.5 mr-1" />}
+                            <span className="font-semibold">{cdClienteMK ? "Cliente MK" : "Cliente MK"}</span>
+                          </div>
+                          {cdClienteMK && (
+                            <span className="text-[8px] opacity-90 -mt-0.5 font-medium">Identificado</span>
+                          )}
+                        </Button>
                       
                       {(selectedChatData.status || (selectedChatData as any).statusP) !== 'concluido' ? (
                         <>
@@ -1489,6 +1545,81 @@ const Atendimentos = () => {
                               >
                                 <RotateCcw className="w-3 h-3 mr-1" />
                                 Reabrir
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    );
+                  })()}
+                  {/* Overlay de Intervenção Humana (Escalado pelo n8n) */}
+                  {(() => {
+                    const isClosed = (selectedChatData.status || (selectedChatData as any).statusP) === 'concluido';
+                    const hasIntervention = selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
+                    
+                    if (isClosed || !hasIntervention) return null;
+
+                    // Pega o resumo que vem do useChats (Supabase) ou procura nas mensagens
+                    let summaryText = (selectedChatData as any).escalationSummary || 'Aguardando resumo da IA...';
+                    
+                    // Busca reversa para pegar a última mensagem com resumo (apenas se não achou no banco)
+                    if (!summaryText || summaryText === 'Aguardando resumo da IA...') {
+                      if (messages && messages.length > 0) {
+                        for (let i = messages.length - 1; i >= 0; i--) {
+                          const m = messages[i];
+                          if (m.content && m.content.includes('*Resumo da conversa*:')) {
+                            const parts = m.content.split('*Resumo da conversa*:');
+                            if (parts.length > 1) {
+                              summaryText = parts[1].trim().replace(/^"|"$/g, '');
+                            }
+                            break;
+                          }
+                        }
+                      }
+                    }
+
+                    return (
+                      <div className="absolute inset-0 z-30 flex items-center justify-center p-3 bg-black/20 backdrop-blur-[1px]">
+                        <Card className="w-full max-w-sm shadow-2xl border-red-500/30 animate-in fade-in zoom-in-95 duration-200">
+                          <CardHeader className="text-center pb-1 pt-4">
+                            <div className="mx-auto bg-red-100 w-8 h-8 rounded-full flex items-center justify-center mb-1.5 shadow-inner">
+                              <AlertCircle className="w-4 h-4 text-red-600 animate-pulse" />
+                            </div>
+                            <CardTitle className="text-base text-red-700">Intervenção Solicitada</CardTitle>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">A IA identificou a necessidade de um atendente humano.</p>
+                          </CardHeader>
+                          <CardContent className="space-y-2 px-4 pb-4">
+                            <div className="bg-[#f8f9fa] p-2.5 rounded-lg text-left border border-border/60 shadow-sm max-h-28 overflow-y-auto">
+                              <h4 className="text-[10px] font-bold text-muted-foreground mb-1 flex items-center uppercase tracking-wider">
+                                <Bot className="w-3 h-3 mr-1 text-primary" /> Resumo da IA
+                              </h4>
+                              <p className="text-[12px] leading-relaxed text-[#54656f] whitespace-pre-wrap">{summaryText}</p>
+                            </div>
+                            
+                            <div className="flex gap-2 pt-1 border-t border-border/50 mt-2">
+                              <Button 
+                                className="flex-1 h-7 text-[11px] shadow-sm bg-red-600 hover:bg-red-700 text-white" 
+                                onClick={() => {
+                                  takeOverChatMutation.mutate({
+                                    id: selectedChatData.id,
+                                    labels: selectedChatData.labels
+                                  });
+                                  const firstName = formatClientName(selectedChatData).split(' ')[0] || '';
+                                  const clientGreeting = firstName ? `, ${firstName}` : '';
+                                  // Essa é a mensagem placeholder que será substituída por uma geração de IA no futuro
+                                  setSuggestedMessage(`Olá${clientGreeting}! Meu nome é ${user?.name?.split(' ')[0] || 'atendente'}. Vi que você precisa de ajuda, já li o resumo e vou dar continuidade ao seu atendimento.`);
+                                }}
+                                disabled={takeOverChatMutation.isPending}
+                              >
+                                {takeOverChatMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <UserCheck className="w-3 h-3 mr-1" />}
+                                Começar a Atender
+                              </Button>
+                              <Button 
+                                className="flex-[0.4] h-7 px-2 text-[11px]"
+                                variant="outline"
+                                onClick={() => setShowTransferModal(true)}
+                              >
+                                Transferir
                               </Button>
                             </div>
                           </CardContent>
@@ -1720,7 +1851,7 @@ const Atendimentos = () => {
                                       {/* Detector de CPF nas mensagens */}
                                       {(() => {
                                         const cpfRegex = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/;
-                                        const cpfMatch = message.content ? message.content.match(cpfRegex) : null;
+                                        const cpfMatch = message.content?.match(cpfRegex);
                                         if (cpfMatch) {
                                           const foundCpf = cpfMatch[0].replace(/\D/g, '');
                                           const isLinked = cdClienteMK && chatMKMap[selectedChat]?.cliente;
@@ -1833,9 +1964,63 @@ const Atendimentos = () => {
                   )}
                 </CardContent>
 
-                {/* Message Input - Estilo WhatsApp */}
-                <div className="p-3 bg-[#f0f2f5] border-t border-[#e9edef]">
-                  <div className="flex items-center gap-2">
+                {/* Bugio de Sugestão de IA */}
+                {suggestedMessage && (
+                  <div className="absolute bottom-[4.5rem] left-0 right-0 px-4 z-20 flex justify-center animate-in slide-in-from-bottom-2 fade-in duration-200">
+                    <div className="bg-white border shadow-[0_-4px_10px_rgba(0,0,0,0.05)] rounded-xl flex items-center gap-3 p-2.5 max-w-2xl w-full">
+                      <div className="bg-primary/10 p-1.5 rounded-full flex-shrink-0">
+                        <Bot className="w-5 h-5 text-primary" />
+                      </div>
+                      <div 
+                        className="flex-1 min-w-0 cursor-pointer overflow-hidden rounded-md group"
+                        onClick={() => {
+                          setMessageText(suggestedMessage);
+                          setSuggestedMessage(null);
+                        }}
+                      >
+                        <p className="text-[10px] text-muted-foreground mb-0.5 font-bold uppercase tracking-wider group-hover:text-primary transition-colors"> Sugestão de Resposta (Clique para usar)</p>
+                        <p className="text-[13px] text-foreground truncate group-hover:text-primary transition-colors">
+                          {suggestedMessage}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground flex-shrink-0 rounded-full hover:bg-red-50 hover:text-red-600" onClick={() => setSuggestedMessage(null)}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Area Footer - Input & Sugestões */}
+                <div className="relative">
+                  {/* Bugio de Sugestão de IA */}
+                  {suggestedMessage && (
+                    <div className="absolute bottom-full left-0 right-0 px-4 mb-2 z-20 flex justify-center animate-in slide-in-from-bottom-2 fade-in duration-200">
+                      <div className="bg-white border shadow-lg rounded-xl flex items-center gap-3 p-3 max-w-2xl w-full">
+                        <div className="bg-primary/10 p-2 rounded-full flex-shrink-0">
+                          <Bot className="w-5 h-5 text-primary" />
+                        </div>
+                        <div 
+                          className="flex-1 min-w-0 cursor-pointer overflow-hidden rounded-md group"
+                          onClick={() => {
+                            setMessageText(suggestedMessage);
+                            setSuggestedMessage(null);
+                          }}
+                        >
+                          <p className="text-[11px] text-muted-foreground mb-0.5 font-bold uppercase tracking-wider group-hover:text-primary transition-colors">Sugestão de Resposta (Clique para usar)</p>
+                          <p className="text-[13px] text-foreground truncate group-hover:text-primary transition-colors">
+                            {suggestedMessage}
+                          </p>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground flex-shrink-0 rounded-full hover:bg-red-50 hover:text-red-600 transition-colors" onClick={() => setSuggestedMessage(null)}>
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Message Input - Estilo WhatsApp */}
+                  <div className="p-3 bg-[#f0f2f5] border-t border-[#e9edef]">
+                    <div className="flex items-center gap-2">
                     <div className="flex-1 bg-white rounded-lg">
                       <Input
                         placeholder="Digite uma mensagem"
@@ -1858,6 +2043,7 @@ const Atendimentos = () => {
                       <Send className="w-5 h-5 text-white" />
                     </Button>
                   </div>
+                </div>
                 </div>
               </Card>
             ) : (

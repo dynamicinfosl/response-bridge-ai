@@ -58,8 +58,21 @@ async function mkFetch<T>(
     const text = await res.text();
     if (!text?.trim()) return {} as T;
     try {
-      return JSON.parse(text) as T;
-    } catch {
+      const parsed = JSON.parse(text);
+      
+      // Detecção de token expirado via payload (o MK as vezes retorna 200 OK com erro de token)
+      if (parsed && typeof parsed === 'object' && parsed.status === 'ERRO') {
+        const msg = String(parsed.Mensagem || parsed.message || parsed.msg || '').toLowerCase();
+        if ((msg.includes('token') && (msg.includes('expirado') || msg.includes('inválido'))) && retry) {
+          console.warn('[MK Fetch] Token expirado detectado no payload. Invalidando cache e tentando novamente...');
+          invalidateMKCache();
+          return mkFetch<T>(path, params, false);
+        }
+      }
+      
+      return parsed as T;
+    } catch (e) {
+      // Ignora erro de JSON parse aqui, lança erro genérico abaixo
       throw new Error(`Resposta do MK não é JSON válido. Endpoint: ${path}`);
     }
   } catch (err) {
@@ -185,26 +198,44 @@ export function mapInvoiceMK(raw: any): MKInvoice {
 
 /** Consulta cliente por CPF ou CNPJ (WSMKConsultaDoc) */
 export async function consultaDoc(doc: string): Promise<MKClienteDoc | MKClienteDoc[]> {
-  const raw = await mkFetch<MKClienteDoc | MKClienteDoc[] | { [key: string]: unknown }>(
+  const raw = await mkFetch<any>(
     '/mk/WSMKConsultaDoc.rule',
     { doc: doc.replace(/\D/g, '') }
   );
   if (Array.isArray(raw)) return raw.map(mapClienteMK);
-  if (raw && typeof raw === 'object' && ('cd_cliente' in raw || 'nome' in raw || 'CodigoPessoa' in raw)) return mapClienteMK(raw);
-  if (raw && typeof raw === 'object') return [mapClienteMK(raw)];
+  if (raw && typeof raw === 'object') {
+    if ('cd_cliente' in raw || 'nome' in raw || 'CodigoPessoa' in raw) {
+      return mapClienteMK(raw);
+    }
+    // Explora o primeiro array encontado (geralmente .clientes ou .data)
+    for (const key of Object.keys(raw)) {
+      if (Array.isArray(raw[key])) {
+        return raw[key].map(mapClienteMK);
+      }
+    }
+    return [mapClienteMK(raw)];
+  }
   return {};
 }
 
 /** Consulta pessoa pelo nome (WSMKConsultaNome) */
 export async function consultaNome(nome: string): Promise<MKClienteDoc | MKClienteDoc[]> {
-  const raw = await mkFetch<MKClienteDoc | MKClienteDoc[] | { [key: string]: unknown }>(
+  const raw = await mkFetch<any>(
     '/mk/WSMKConsultaNome.rule',
     { nome }
   );
   if (Array.isArray(raw)) return raw.map(mapClienteMK);
   if (raw && typeof raw === 'object') {
-    const list = Array.isArray((raw as any).clientes) ? (raw as any).clientes : [raw];
-    return list.map(mapClienteMK);
+    if ('cd_cliente' in raw || 'nome' in raw || 'CodigoPessoa' in raw) {
+      return mapClienteMK(raw);
+    }
+    // Explora o primeiro array encontado
+    for (const key of Object.keys(raw)) {
+      if (Array.isArray(raw[key])) {
+        return raw[key].map(mapClienteMK);
+      }
+    }
+    return [mapClienteMK(raw)];
   }
   return [];
 }

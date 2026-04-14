@@ -43,6 +43,8 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
   const { canAccessAdvancedSettings } = usePermissions();
 
   // Menu items com verificação de permissões
+  const isMaster = user?.role === 'master';
+
   const menuItems = [
     {
       title: 'Dashboard',
@@ -62,17 +64,20 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
     {
       title: 'Ligações com IA',
       href: '/ligacoes-ia',
-      icon: Phone
+      icon: Phone,
+      masterOnly: true
     },
     {
       title: 'Ordens de Serviço',
       href: '/ordem-servico',
-      icon: FileText
+      icon: FileText,
+      masterOnly: true
     },
     {
       title: 'Configuração de IA',
       href: '/configuracao-ia',
-      icon: Bot
+      icon: Bot,
+      masterOnly: true
     },
     {
       title: 'Relatórios',
@@ -87,20 +92,22 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
     {
       title: 'Configurações',
       href: '/configuracoes',
-      icon: Settings
+      icon: Settings,
+      masterOnly: true
     },
     // Apenas Master pode ver Configurações Avançadas
     ...(canAccessAdvancedSettings() ? [{
       title: 'Configurações Avançadas',
       href: '/configuracoes-avancadas',
-      icon: Settings2
+      icon: Settings2,
+      masterOnly: true
     }] : []),
     {
       title: 'Sair',
       href: '/login',
       icon: LogOut
     }
-  ];
+  ].filter(item => !item.masterOnly || isMaster);
 
   // Função para obter iniciais do nome do usuário
   const getInitials = (name?: string, email?: string) => {
