@@ -5,6 +5,10 @@
       "destination": "/api/chatwoot/[...path]"
     },
     {
+      "source": "/api/mk/:path*",
+      "destination": "/api/mk/[...path]"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

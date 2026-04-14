@@ -69,12 +69,11 @@ function envToken(): string {
   return ((import.meta.env.VITE_MK_TOKEN as string) || '').trim();
 }
 
-/** Em dev, a base precisa ser /api/mk para o proxy do Vite. */
-function resolveBaseUrl(baseUrl: string): string {
-  if (typeof window !== 'undefined' && import.meta.env.DEV && envBaseUrl()) {
-    return '/api/mk';
-  }
-  return baseUrl;
+/** Em dev, usa o proxy Vite /api/mk. Em prod, usa o proxy Vercel /api/mk. Nunca chama o MK direto do browser. */
+function resolveBaseUrl(_baseUrl: string): string {
+  // Sempre usa o proxy (Vite em dev, Vercel serverless em prod)
+  // Isso evita Mixed Content (HTTPS -> HTTP) em produção
+  return '/api/mk';
 }
 
 function getCached(): MKConfig | null {
