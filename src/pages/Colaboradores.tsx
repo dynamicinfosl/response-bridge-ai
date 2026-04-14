@@ -73,13 +73,14 @@ interface Colaborador {
   avatar_url: string | null;
   chatwoot_id: number | null;
   password_plain?: string | null;
+  phone?: string | null;
   created_at: string;
   supervisor_name?: string;
 }
 
-interface FormData {
   email: string;
   full_name: string;
+  phone: string;
   password: string;
   role: UserRole;
   area: UserArea;
@@ -89,6 +90,7 @@ interface FormData {
 const EMPTY_FORM: FormData = {
   email: '',
   full_name: '',
+  phone: '',
   password: '',
   role: 'user',
   area: '',
@@ -147,7 +149,7 @@ export default function Colaboradores() {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at&order=created_at.desc`;
+      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at&order=created_at.desc`;
       console.log('🔵 [Colaboradores] fetch URL:', url.substring(0, 80) + '...');
 
       const response = await fetch(url, {
@@ -209,6 +211,7 @@ export default function Colaboradores() {
     setForm({
       email:        u.email || '',
       full_name:    u.full_name || '',
+      phone:        u.phone || '',
       password:     u.password_plain || '',
       role:         u.role || 'user',
       area:         (u.area as UserArea) || '',
@@ -244,6 +247,7 @@ export default function Colaboradores() {
         user_email: form.email,
         user_password: password,
         user_name: form.full_name,
+        user_phone: form.phone || null,
       });
 
       if (rpcError) throw rpcError;
@@ -281,6 +285,7 @@ export default function Colaboradores() {
             area:         form.area || null,
             supervisor_id: form.supervisor_id || null,
             full_name:    form.full_name,
+            phone:        form.phone || null,
             chatwoot_id:  chatwootId,
             password_plain: password,
           }),
@@ -347,6 +352,7 @@ export default function Colaboradores() {
         role:         form.role,
         area:         form.area || null,
         supervisor_id: form.supervisor_id || null,
+        phone:        form.phone || null,
         password_plain: form.password,
       };
 
@@ -639,6 +645,10 @@ export default function Colaboradores() {
               <Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Nome do colaborador" />
             </div>
             <div className="space-y-1">
+              <Label>Telefone</Label>
+              <Input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="(11) 99999-9999" />
+            </div>
+            <div className="space-y-1">
               <Label>Senha</Label>
               <div className="relative">
                 <Input 
@@ -724,6 +734,10 @@ export default function Colaboradores() {
             <div className="space-y-1">
               <Label>Nome Completo *</Label>
               <Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Nome do colaborador" />
+            </div>
+            <div className="space-y-1">
+              <Label>Telefone</Label>
+              <Input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="(11) 99999-9999" />
             </div>
             <div className="space-y-1">
               <Label>Senha</Label>
