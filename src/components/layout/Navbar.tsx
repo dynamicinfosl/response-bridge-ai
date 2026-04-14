@@ -159,14 +159,11 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
         }
         <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
           <div className="flex items-center gap-2">
-            {companyLogo ? (
-              <img src={companyLogo} alt={companyName} className="h-6 sm:h-7 object-contain" />
-            ) : (
-              <div className="flex items-baseline">
-                <span className="text-white font-bold text-lg sm:text-xl tracking-tight">adapt</span>
-                <span className="text-white/70 text-lg sm:text-xl font-light tracking-tight">link</span>
-              </div>
-            )}
+            <img 
+              src={companyLogo || logoImage} 
+              alt={companyName || "Adapt Link"} 
+              className="h-[28px] sm:h-[32px] w-auto object-contain" 
+            />
           </div>
           
           <div className="h-6 w-px bg-white/30 hidden sm:block"></div>
