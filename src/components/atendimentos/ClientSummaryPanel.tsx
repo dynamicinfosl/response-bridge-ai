@@ -200,8 +200,11 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
       }
 
       // Formatação especial para contratos
-      if (key.toLowerCase().includes('contrato')) {
-        return parsed.map((item: any) => item.descricao || item.plano || JSON.stringify(item)).join(' | ');
+      if (key.toLowerCase().includes('contrato') || key.toLowerCase().includes('plano')) {
+        return parsed.map((item: any) => 
+          item.plano_acesso || item.nome_plano || item.plano || item.descricao || item.nome || 
+          (typeof item === 'string' ? item : '')
+        ).filter(Boolean).join(' | ') || 'Nenhum';
       }
 
       return parsed.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ');
@@ -352,13 +355,17 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                         }
 
                         // Extração inteligente de plano/contrato
-                        let plano = c.plano || c.Plano || c.PlanoAcesso || c.Produto || 'N/A';
-                        if (plano === 'N/A' && data?.contratos) {
+                        let planoRaw = c.plano || c.plano_acesso || c.Plano || c.PlanoAcesso || c.Produto;
+                        let plano = 'N/A';
+                        
+                        if (planoRaw) {
+                          plano = formatValue('plano', planoRaw);
+                        } else if (data?.contratos) {
                           plano = formatValue('contratos', data.contratos);
                         }
                         
-                        const status = c.StatusPessoa ?? c.Status ?? c.status ?? c.Situacao ?? 'N/A';
-                        const cpfExibicao = (c.CPF_CNPJ || c.doc || doc || 'N/A');
+                        const status = c.status || c.StatusPessoa || c.Status || c.Situacao || 'N/A';
+                        const cpfExibicao = c.doc || c.CPF_CNPJ || c.CpfCnpj || c.documento || doc || 'N/A';
                         
                         return (
                           <>
