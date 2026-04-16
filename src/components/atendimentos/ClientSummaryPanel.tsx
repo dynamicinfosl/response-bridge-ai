@@ -289,7 +289,7 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="h-7 text-[10px] gap-1" onClick={() => window.open(`https://mk.adaptlink.com.br/`, '_blank')}>
+                <Button variant="outline" size="sm" className="h-7 text-[10px] gap-1" onClick={() => window.open(`https://sac.adaptlink.com.br/mk`, '_blank')}>
                   <ExternalLink className="w-3 h-3" />
                   Abrir MK
                 </Button>
