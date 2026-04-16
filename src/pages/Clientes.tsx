@@ -7,12 +7,17 @@ import { Search, UserCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useClientesMK } from '@/hooks/useMK';
 import { getMKConfig, invalidateMKCache } from '@/lib/mk-config';
 import type { MKClienteDoc } from '@/lib/mk-api';
+import { ClientSummaryPanel } from '@/components/atendimentos/ClientSummaryPanel';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 
 const Clientes = () => {
   const [nomeCliente, setNomeCliente] = useState('');
   const [doc, setDoc] = useState('');
   const [tokenPronto, setTokenPronto] = useState(false);
   const [tokenErro, setTokenErro] = useState<string | null>(null);
+  const [selectedCliente, setSelectedCliente] = useState<MKClienteDoc | null>(null);
+  const [showPanel, setShowPanel] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -60,13 +65,25 @@ const Clientes = () => {
     };
   }, [loadConfig]);
 
-  const params = {
-    ...(nomeCliente.trim() && { nome_cliente: nomeCliente.trim() }),
-    ...(doc.trim() && { doc: doc.replace(/\D/g, '') }),
-  };
+  const [activeParams, setActiveParams] = useState<{ nome_cliente?: string; doc?: string }>({});
+
+  const handleSearch = useCallback(() => {
+    const p = {
+      ...(nomeCliente.trim() && { nome_cliente: nomeCliente.trim() }),
+      ...(doc.trim() && { doc: doc.replace(/\D/g, '') }),
+    };
+    setActiveParams(p);
+  }, [nomeCliente, doc]);
+
   const hasFilter = !!(nomeCliente.trim() || doc.trim());
-  const podeBuscar = tokenPronto && hasFilter;
-  const { data: clientes = [], isLoading, error, refetch } = useClientesMK(params, podeBuscar);
+  const podeBuscar = tokenPronto && Object.keys(activeParams).length > 0;
+  const { data: clientes = [], isLoading, error } = useClientesMK(activeParams, podeBuscar);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && hasFilter && !isLoading) {
+      handleSearch();
+    }
+  };
 
   return (
     <Layout>
@@ -96,6 +113,7 @@ const Clientes = () => {
                   placeholder="Buscar por nome..."
                   value={nomeCliente}
                   onChange={(e) => setNomeCliente(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   className="w-full"
                 />
               </div>
@@ -105,6 +123,7 @@ const Clientes = () => {
                   placeholder="Apenas números"
                   value={doc}
                   onChange={(e) => setDoc(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={handleKeyDown}
                   className="w-full"
                 />
               </div>
@@ -112,13 +131,13 @@ const Clientes = () => {
             <div className="flex gap-2">
               <Button
                 size="sm"
-                onClick={() => refetch()}
+                onClick={handleSearch}
                 disabled={!hasFilter || isLoading}
               >
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Search className="w-4 h-4 mr-2" />}
                 Buscar
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => { setNomeCliente(''); setDoc(''); }}>
+              <Button variant="secondary" size="sm" onClick={() => { setNomeCliente(''); setDoc(''); setActiveParams({}); }}>
                 Limpar
               </Button>
             </div>
@@ -176,26 +195,53 @@ const Clientes = () => {
                     <tr className="border-b border-border">
                       <th className="text-left p-2 font-medium">Código</th>
                       <th className="text-left p-2 font-medium">Nome</th>
-                      <th className="text-left p-2 font-medium">Doc (CPF/CNPJ)</th>
-                      <th className="text-left p-2 font-medium">Outros</th>
+                      <th className="text-left p-2 font-medium">Contrato / Plano</th>
+                      <th className="text-left p-2 font-medium">Status</th>
+                      <th className="text-left p-2 font-medium">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {clientes.map((c: MKClienteDoc & Record<string, unknown>, idx: number) => {
-                      const cod = c.cd_cliente ?? c.CD_CLIENTE ?? c.CodigoPessoa ?? c.codigo ?? '-';
-                      const nome = c.nome ?? c.name ?? c.NOME ?? c.NOME_CLIENTE ?? '-';
-                      const documento = c.doc ?? c.documento ?? c.DOC ?? c.CPF ?? c.CPF_CNPJ ?? '-';
+                    {clientes.map((c: MKClienteDoc, idx: number) => {
+                      const cod = c.cd_cliente || '-';
+                      const nome = c.nome || '-';
+                      const status = c.status;
+                      const plano = c.plano;
+                      
                       return (
-                        <tr key={String(cod ?? idx)} className="border-b border-border/50 hover:bg-muted/30">
-                          <td className="p-2">{String(cod)}</td>
-                          <td className="p-2">{String(nome)}</td>
-                          <td className="p-2">{String(documento)}</td>
-                          <td className="p-2 text-muted-foreground">
-                            {Object.entries(c)
-                              .filter(([k]) => !['cd_cliente', 'CD_CLIENTE', 'CodigoPessoa', 'nome', 'name', 'NOME', 'NOME_CLIENTE', 'doc', 'documento', 'DOC', 'CPF', 'CPF_CNPJ'].includes(k))
-                              .slice(0, 2)
-                              .map(([k, v]) => `${k}: ${v}`)
-                              .join(' · ') || '-'}
+                        <tr key={String(cod || idx)} className="border-b border-border/50 hover:bg-muted/30">
+                          <td className="p-2 font-mono text-xs">{String(cod)}</td>
+                          <td className="p-2">
+                            <div className="flex flex-col">
+                              <span className="font-medium">{String(nome)}</span>
+                              <span className="text-[10px] text-muted-foreground">{c.doc}</span>
+                            </div>
+                          </td>
+                          <td className="p-2 text-xs">{String(plano || 'N/A')}</td>
+                          <td className="p-2">
+                            {status ? (
+                              <Badge variant="outline" className={cn(
+                                "text-[10px] uppercase font-bold",
+                                String(status).toLowerCase().includes('ativ') || String(status).toLowerCase().includes('ok') 
+                                  ? "bg-green-100 text-green-700 border-green-200" 
+                                  : "bg-red-100 text-red-700 border-red-200"
+                              )}>
+                                {String(status)}
+                              </Badge>
+                            ) : '-'}
+                          </td>
+                          <td className="p-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-7 text-[10px] gap-1 px-2"
+                              onClick={() => {
+                                setSelectedCliente(c);
+                                setShowPanel(true);
+                              }}
+                            >
+                              <Search className="w-3 h-3" />
+                              Detalhes
+                            </Button>
                           </td>
                         </tr>
                       );
@@ -207,6 +253,15 @@ const Clientes = () => {
           </CardContent>
         </Card>
       </div>
+
+      {selectedCliente && (
+        <ClientSummaryPanel
+          open={showPanel}
+          onClose={() => setShowPanel(false)}
+          cliente={selectedCliente}
+          cdCliente={selectedCliente.cd_cliente ? String(selectedCliente.cd_cliente) : null}
+        />
+      )}
     </Layout>
   );
 };

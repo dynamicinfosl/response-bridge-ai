@@ -161,12 +161,15 @@ const Atendimentos = () => {
   const [showBuscarClienteMK, setShowBuscarClienteMK] = useState(false);
   const [showMkPanel, setShowMkPanel] = useState(false);
   const [suggestedMessage, setSuggestedMessage] = useState<string | null>(null);
-  const [chatMKMap, setChatMKMap] = useState<Record<string, { cd: string; cliente: MKClienteDoc }>>({});
+  const [chatMKMap, setChatMKMap] = useState<Record<string, { clients: MKClienteDoc[] }>>({});
   
   // Identidade derivada do chat selecionado
   const currentMKIdentity = selectedChat ? chatMKMap[selectedChat] : null;
-  const cdClienteMK = currentMKIdentity?.cd || null;
-  const clienteMK = currentMKIdentity?.cliente || null;
+  const clientsMK = currentMKIdentity?.clients || [];
+  
+  // Para manter compatibilidade com o hook de resumo do cabeçalho
+  const cdClienteMK = clientsMK.length > 0 ? String(clientsMK[0].cd_cliente) : null;
+  const clienteMK = clientsMK.length > 0 ? clientsMK[0] : null;
 
   const [searchMKBy, setSearchMKBy] = useState<'doc' | 'nome'>('doc');
   const [searchMKValue, setSearchMKValue] = useState('');
@@ -281,23 +284,11 @@ const Atendimentos = () => {
           const foundCpf = match[0].replace(/\D/g, '');
           consultaDoc(foundCpf).then(r => {
             const arr = Array.isArray(r) ? r : r ? [r] : [];
-            const first = arr[0];
-            if (first) {
-              const cd = String(
-                (first as any).cd_cliente ?? 
-                (first as any).cdcliente ?? 
-                (first as any).CodigoPessoa ?? 
-                (first as any).CodPessoa ?? 
-                (first as any).idPessoa ?? 
-                (first as any).id ?? 
-                ''
-              );
-              if (cd) {
-                setChatMKMap(prev => ({
-                  ...prev,
-                  [selectedChat]: { cd, cliente: first as MKClienteDoc }
-                }));
-              }
+            if (arr.length > 0) {
+              setChatMKMap(prev => ({
+                ...prev,
+                [selectedChat]: { clients: arr }
+              }));
             }
           }).catch(() => { /* falha silenciosa no auto */ });
           break;
@@ -837,13 +828,11 @@ const Atendimentos = () => {
       if (searchMKBy === 'doc') {
         const r = await consultaDoc(value.replace(/\D/g, ''));
         const arr = Array.isArray(r) ? r : r ? [r] : [];
-        const first = arr[0];
-        if (first) {
-          const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? '');
+        if (arr.length > 0) {
           if (selectedChat) {
             setChatMKMap(prev => ({
               ...prev,
-              [selectedChat]: { cd, cliente: first as MKClienteDoc }
+              [selectedChat]: { clients: arr }
             }));
           }
           setShowBuscarClienteMK(false);
@@ -854,13 +843,11 @@ const Atendimentos = () => {
       } else {
         const r = await consultaNome(value);
         const arr = Array.isArray(r) ? r : r ? [r] : [];
-        const first = arr[0];
-        if (first) {
-          const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? '');
+        if (arr.length > 0) {
           if (selectedChat) {
             setChatMKMap(prev => ({
               ...prev,
-              [selectedChat]: { cd, cliente: first as MKClienteDoc }
+              [selectedChat]: { clients: arr }
             }));
           }
           setShowBuscarClienteMK(false);
@@ -1899,16 +1886,21 @@ const Atendimentos = () => {
                                                   
                                                   consultaDoc(foundCpf).then(r => {
                                                     const arr = Array.isArray(r) ? r : r ? [r] : [];
-                                                    const first = arr[0];
-                                                    if (first) {
+                                                    if (arr.length > 0) {
+                                                      const first = arr[0];
                                                       const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? (first as any).CodigoPessoa ?? (first as any).CodPessoa ?? (first as any).id ?? '');
                                                       const nome = String((first as any).nome ?? (first as any).NomePessoa ?? (first as any).nome_cliente ?? (first as any).Nome ?? (first as any).RazaoSocial ?? (first as any).Email ?? 'Desconhecido');
                                                       
-                                                      toast.success(`Cliente ${nome || cd} encontrado!`);
+                                                      if (arr.length > 1) {
+                                                        toast.success(`${arr.length} cadastros encontrados para este CPF!`);
+                                                      } else {
+                                                        toast.success(`Cliente ${nome || cd} encontrado!`);
+                                                      }
+
                                                       if (selectedChat) {
                                                         setChatMKMap(prev => ({
                                                           ...prev,
-                                                          [selectedChat]: { cd, cliente: first as MKClienteDoc }
+                                                          [selectedChat]: { clients: arr }
                                                         }));
                                                         setShowMkPanel(true);
                                                         window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
@@ -2152,10 +2144,9 @@ const Atendimentos = () => {
 
         {/* Painel resumo cliente MK (redimensionável e minimizável) */}
         <ClientSummaryPanel
-          open={!!cdClienteMK && showMkPanel}
+          open={clientsMK.length > 0 && showMkPanel}
           onClose={() => setShowMkPanel(false)}
-          cliente={clienteMK}
-          cdCliente={cdClienteMK}
+          clients={clientsMK}
           conversationId={selectedChat}
         />
       </div>
