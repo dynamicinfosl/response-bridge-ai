@@ -54,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Tentar buscar primeiro
       let { data: userProfile, error } = await supabase
         .from('users')
-        .select('id, email, full_name, role, area, supervisor_id, avatar_url')
+        .select('id, email, full_name, role, area, supervisor_id, avatar_url, chatwoot_id')
         .eq('id', authUser.id)
         .single();
 
@@ -96,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           area: userProfile.area as User['area'],
           supervisor_id: userProfile.supervisor_id || undefined,
           avatar_url: userProfile.avatar_url || authUser.user_metadata?.avatar_url || null,
+          chatwoot_id: userProfile.chatwoot_id,
         };
 
         console.log('✅ Dados do usuário (tabela users):', userData);
