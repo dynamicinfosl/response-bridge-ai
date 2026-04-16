@@ -169,10 +169,10 @@ export function mapClienteMK(raw: any): MKClienteDoc {
     ...raw,
     cd_cliente: cd,
     nome: nome,
-    doc: String(raw.doc ?? raw.DOC ?? raw.CPF ?? raw.CNPJ ?? raw.CPF_CNPJ ?? raw.documento ?? raw.Documento ?? raw.CpfCnpj ?? raw.CPF_CNPJ_Formatado ?? ''),
+    doc: String(raw.doc ?? raw.DOC ?? raw.CPF ?? raw.CNPJ ?? raw.CPF_CNPJ ?? raw.documento ?? raw.Documento ?? raw.CpfCnpj ?? ''),
     email: String(raw.email ?? raw.Email ?? raw.email_cliente ?? ''),
     status: raw.status ?? raw.Status ?? raw.Situacao ?? raw.situacao ?? raw.status_pessoa ?? raw.StatusPessoa ?? raw.DescricaoSituacao ?? raw.status_cliente,
-    plano: raw.plano ?? raw.plano_acesso ?? raw.Plano ?? raw.PlanoAcesso ?? raw.plano_atual ?? raw.nome_plano ?? raw.plano_contratado ?? raw.PlanoContratado ?? raw.lista_contratos ?? raw.contratos ?? '',
+    plano: raw.plano ?? raw.plano_acesso ?? raw.Plano ?? raw.PlanoAcesso ?? raw.plano_atual ?? raw.nome_plano ?? raw.plano_contratado ?? raw.PlanoContratado,
     endereco_completo: raw.endereco_completo ?? raw.Endereco_completo ?? raw.endereco ?? raw.Endereco ?? raw.Logradouro ?? raw.endereco_cliente ?? '',
   };
 }
