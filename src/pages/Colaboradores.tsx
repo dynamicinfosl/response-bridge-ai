@@ -150,7 +150,7 @@ export default function Colaboradores() {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at&order=created_at.desc`;
+      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at,supervisor:supervisor_id(full_name)&order=created_at.desc`;
       console.log('🔵 [Colaboradores] fetch URL:', url.substring(0, 80) + '...');
 
       const response = await fetch(url, {
@@ -171,13 +171,19 @@ export default function Colaboradores() {
         return;
       }
 
-      const rows: Colaborador[] = await response.json();
+      const rows: any[] = await response.json();
       console.log('🟢 [Colaboradores] Recebidos:', rows.length, 'users');
+
+      // Processar rows para incluir supervisor_name
+      const processedRows: Colaborador[] = rows.map(r => ({
+        ...r,
+        supervisor_name: r.supervisor?.full_name || undefined
+      }));
 
       // Proteção para não mostrar masters para quem não é master
       const finalRows = currentUser?.role === 'master' 
-        ? rows 
-        : rows.filter(u => u.role !== 'master');
+        ? processedRows 
+        : processedRows.filter(u => u.role !== 'master');
 
       setColaboradores(finalRows);
     } catch (err: any) {
@@ -327,12 +333,12 @@ export default function Colaboradores() {
         console.warn('Update após criar falhou, mas auth user foi criado. text:', txt);
       }
 
-      console.log('[handleCreate] Recarregando lista de colaboradores...');
-      await load();
-      console.log('[handleCreate] Finalizado com sucesso');
       toast({ title: `Usuário criado! Senha: ${password}` });
       setCreateOpen(false);
       resetForm();
+      console.log('[handleCreate] Recarregando lista de colaboradores...');
+      await load();
+      console.log('[handleCreate] Finalizado com sucesso');
     } catch (err: any) {
       console.error('[handleCreate] CRITICAL ERROR Catch:', err);
       toast({ title: 'Erro ao criar', description: err.message || JSON.stringify(err), variant: 'destructive' });
@@ -410,27 +416,44 @@ export default function Colaboradores() {
         throw new Error(errText || `HTTP ${response.status}`);
       }
 
-      // 🔐 Se a senha foi preenchida, altera a senha real de login via RPC
-      if (form.password) {
-        const { error: rpcError } = await supabase.rpc('admin_change_user_password', {
-          target_user_id: selected.id,
-          new_password: form.password
-        });
-        
-        if (rpcError) {
-          console.error('Erro ao mudar senha real:', rpcError);
-          toast({ 
-            title: 'Aviso', 
-            description: 'Dados salvos, mas houve um erro ao atualizar a senha real de login.', 
-            variant: 'warning' as any 
+      toast({ title: 'Salvo com sucesso!' });
+      setEditOpen(false);
+      resetForm();
+
+      // 🔐 Se a senha foi preenchida e MUDOU, altera a senha real de login via RPC
+      if (form.password && form.password !== selected.password_plain) {
+        console.log('[handleEdit] Alterando senha real via RPC...');
+        try {
+          const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_change_user_password`, {
+            method: 'POST',
+            headers: {
+              'apikey': ANON_KEY,
+              'Authorization': `Bearer ${ANON_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              target_user_id: selected.id,
+              new_password: form.password
+            })
           });
+
+          if (!rpcRes.ok) {
+            const errTxt = await rpcRes.text();
+            console.error('Erro ao mudar senha real:', errTxt);
+            toast({ 
+              title: 'Aviso', 
+              description: 'Dados salvos, mas houve um erro ao atualizar a senha real de login.', 
+              variant: 'warning' as any 
+            });
+          } else {
+            console.log('[handleEdit] Senha real alterada com sucesso.');
+          }
+        } catch (rpcErr) {
+          console.error('Exceção ao mudar senha real:', rpcErr);
         }
       }
 
       await load();
-      toast({ title: 'Salvo com sucesso!' });
-      setEditOpen(false);
-      resetForm();
     } catch (err: any) {
       toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
     } finally {

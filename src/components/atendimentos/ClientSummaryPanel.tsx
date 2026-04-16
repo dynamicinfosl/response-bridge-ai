@@ -38,26 +38,18 @@ import { toast } from 'sonner';
 interface ClientSummaryPanelProps {
   open: boolean;
   onClose: () => void;
-  clients: MKClienteDoc[];
+  cliente: MKClienteDoc | null;
+  cdCliente: string | null;
   conversationId?: string | null;
 }
 
-export function ClientSummaryPanel({ open, onClose, clients, conversationId }: ClientSummaryPanelProps) {
-  const [selectedIndex, setSelectedIndex] = useState(0);
+export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversationId }: ClientSummaryPanelProps) {
   const [minimized, setMinimized] = useState(false);
   const [loadingFatura, setLoadingFatura] = useState<Record<string, boolean>>({});
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [loadingRouter, setLoadingRouter] = useState<Record<string, boolean>>({});
-
-  const currentClient = clients[selectedIndex] || null;
-  const cdCliente = currentClient ? String(currentClient.cd_cliente) : null;
-  const { data, isLoading, error } = useClienteResumo(cdCliente, currentClient, open && !!cdCliente);
-
-  // Resetar seleção ao abrir ou mudar lista
-  useEffect(() => {
-    if (open) setSelectedIndex(0);
-  }, [open, clients?.length]);
+  const { data, isLoading, error } = useClienteResumo(cdCliente, cliente, open && !!cdCliente);
 
   useEffect(() => {
     const handleUnminimize = () => setMinimized(false);
@@ -67,8 +59,8 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
 
   if (!open) return null;
 
-  const nome = data?.cliente?.nome ?? currentClient?.nome ?? 'Cliente';
-  const doc = data?.cliente?.doc ?? currentClient?.doc ?? '';
+  const nome = data?.cliente?.nome ?? cliente?.nome ?? 'Cliente';
+  const doc = data?.cliente?.doc ?? cliente?.doc ?? '';
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -250,34 +242,6 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
 
       {!minimized && (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* Seletor de Cadastros (Caso exista mais de um) */}
-          {clients.length > 1 && (
-            <div className="px-4 py-2 bg-muted/30 border-b flex flex-col gap-2">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                {clients.length} cadastros encontrados. Selecione um:
-              </span>
-              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                {clients.map((c, idx) => (
-                  <Button
-                    key={c.cd_cliente}
-                    variant={selectedIndex === idx ? "default" : "outline"}
-                    size="sm"
-                    className={cn(
-                      "h-auto py-1.5 px-3 flex-shrink-0 flex-col items-start text-left gap-0",
-                      selectedIndex === idx ? "border-primary" : "hover:border-primary/50"
-                    )}
-                    onClick={() => setSelectedIndex(idx)}
-                  >
-                    <span className="text-[10px] font-bold">Cód: {c.cd_cliente}</span>
-                    <span className="text-[9px] opacity-80 truncate max-w-[150px]">
-                      {c.endereco_completo || c.bairro || 'Endereço não informado'}
-                    </span>
-                  </Button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Cabeçalho de Identidade */}
           <div className="p-4 bg-primary/5 border-b space-y-2">
             <div className="flex justify-between items-start">
@@ -332,7 +296,7 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {(() => {
-                        const c = { ...currentClient, ...(data?.cliente || {}) } as any;
+                        const c = (data?.cliente || cliente || {}) as any;
                         const telefone = c.Fone ?? c.fone ?? c.telefone ?? c.Celular ?? c.Contato ?? 'N/A';
                         const email = c.Email ?? c.email ?? 'N/A';
                         
@@ -352,13 +316,12 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                         }
 
                         // Extração inteligente de plano/contrato
-                        let plano = c.plano || c.Plano || c.PlanoAcesso || c.Produto || 'N/A';
-                        if (plano === 'N/A' && data?.contratos) {
-                          plano = formatValue('contratos', data.contratos);
+                        let plano = c.Plano ?? c.plano ?? c.PlanoAcesso ?? c.Produto ?? 'N/A';
+                        if (plano === 'N/A' && c.contratos) {
+                          plano = formatValue('contratos', c.contratos);
                         }
                         
                         const status = c.StatusPessoa ?? c.Status ?? c.status ?? c.Situacao ?? 'N/A';
-                        const cpfExibicao = (c.CPF_CNPJ || c.doc || doc || 'N/A');
                         
                         return (
                           <>
@@ -396,7 +359,7 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                               <FileText className="w-4 h-4 text-primary mt-0.5" />
                               <div className="flex flex-col">
                                 <span className="text-[10px] text-muted-foreground">CPF / CNPJ</span>
-                                <span className="text-xs font-medium">{cpfExibicao}</span>
+                                <span className="text-xs font-medium">{c.CPF_CNPJ ?? c.doc ?? doc ?? 'N/A'}</span>
                               </div>
                             </div>
                             {status !== 'N/A' && (
@@ -544,7 +507,7 @@ export function ClientSummaryPanel({ open, onClose, clients, conversationId }: C
                   <div className="space-y-4 pt-2">
                     {/* Data de Entrada na Empresa */}
                     {(() => {
-                      const c = (data?.cliente || currentClient || {}) as any;
+                      const c = (data?.cliente || cliente || {}) as any;
                       // Busca nos campos prováveis que o MK retorna
                       const clienteDesde = c.cliente_desde || c.data_cadastro || c.dt_cadastro || c.criado_em || c.DataCadastro;
                       if (clienteDesde) {

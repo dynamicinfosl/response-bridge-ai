@@ -41,6 +41,7 @@ export interface User {
   area?: 'tecnica' | 'comercial' | 'financeiro';
   supervisor_id?: string;
   avatar_url?: string;
+  chatwoot_id?: number;
 }
 
 // Interface para o perfil completo do usuário

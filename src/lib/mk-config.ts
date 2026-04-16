@@ -28,14 +28,13 @@ async function fetchMKConfigFromDB(): Promise<MKConfig | null> {
   if (typeof window === 'undefined') return null;
 
   try {
-    console.log('[MK Config] Buscando dados de mk_base_url e mk_token no Supabase...');
     const data: any = await Promise.race([
       supabase
         .from('system_settings')
         .select('key, value')
         .in('key', ['mk_base_url', 'mk_token']),
       new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout_MK_DB')), 8000)
+        setTimeout(() => reject(new Error('Timeout_MK_DB')), 2000)
       )
     ]);
 
@@ -49,8 +48,6 @@ async function fetchMKConfigFromDB(): Promise<MKConfig | null> {
     const baseUrl = (map.mk_base_url ?? '').trim().replace(/\/$/, '');
     const token = (map.mk_token ?? '').trim();
 
-    console.log(`[MK Config] Dados recuperados do Supabase. URL: ${baseUrl ? 'SIM' : 'NÃO'}, Token: ${token ? 'SIM' : 'NÃO'}`);
-
     if (baseUrl || token) {
       return {
         baseUrl: baseUrl || envBaseUrl(),
@@ -58,7 +55,7 @@ async function fetchMKConfigFromDB(): Promise<MKConfig | null> {
       };
     }
   } catch (err: any) {
-    console.error('[MK Config] Exceção ao buscar DB:', err?.message || err);
+    console.warn('[MK Config] Exceção ao buscar DB:', err?.message || err);
     return null;
   }
   return null;
@@ -115,46 +112,36 @@ function setCache(config: MKConfig) {
  * Ordem: cache em memória → cache localStorage → Supabase → .env.
  */
 export async function getMKConfig(): Promise<MKConfig> {
+  console.log('[MK Config Debug] Chamando getMKConfig...');
   const fromCache = getCached();
-  
-  // Se temos cache válido e recente, usamos ele.
   if (fromCache?.baseUrl?.trim() && fromCache?.token?.trim()) {
-    console.log('[MK Config] Usando configuração do cache (localStorage/RAM).');
+    console.log('[MK Config Debug] Retornando do cache.');
     return {
       baseUrl: resolveBaseUrl(fromCache.baseUrl),
       token: fromCache.token,
     };
   }
 
-  console.log('[MK Config] Buscando nova configuração no Supabase (system_settings)...');
+  console.log('[MK Config Debug] Cache vazio, chamando fetchMKConfigFromDB...');
   const fromDb = await fetchMKConfigFromDB();
+  console.log(`[MK Config Debug] fetchMKConfigFromDB retornou: ${fromDb ? 'Sucesso' : 'Falha'}`);
   
   if (fromDb) {
-    console.log(`[MK Config] Configuração recuperada do Supabase. Token (parcial): ${fromDb.token.substring(0, 4)}...`);
     const resolved = {
       baseUrl: resolveBaseUrl(fromDb.baseUrl || envBaseUrl()),
       token: fromDb.token || envToken(),
     };
-    
-    // Salva no cache os valores ORIGINAIS (sem o prefixo de proxy)
-    setCache({ 
-      baseUrl: fromDb.baseUrl || envBaseUrl(), 
-      token: fromDb.token || envToken() 
-    });
-    
+    if (resolved.baseUrl || resolved.token) {
+      setCache({ baseUrl: fromDb.baseUrl || envBaseUrl(), token: fromDb.token || envToken() });
+    }
     return resolved;
   }
 
-  // Fallback final: Variáveis de ambiente
-  console.warn('[MK Config] Falha ao buscar no Supabase. Usando fallback do .env (VITE_MK_TOKEN).');
+  console.log('[MK Config Debug] Usando .env como fallback final.');
   const baseUrl = resolveBaseUrl(envBaseUrl());
   const token = envToken();
   const config: MKConfig = { baseUrl, token };
-  
-  if (baseUrl || token) {
-    setCache({ baseUrl: envBaseUrl(), token });
-  }
-  
+  if (baseUrl || token) setCache({ baseUrl: envBaseUrl(), token });
   return config;
 }
 
