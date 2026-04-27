@@ -88,8 +88,19 @@ export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAtte
 
       toast({
         title: "Atendimento transferido!",
-        description: `Conversa com ${clientName} foi atualizada com sucesso.`,
+        description: `Conversa com ${clientName} foi finalizada com sucesso.`,
       });
+
+      // Log de Auditoria
+      const targetAgent = agents.find(a => String(a.id) === selectedAgent)?.name;
+      const targetSector = sectors.find(s => s.id === selectedSector)?.name;
+      
+      await logAuditAction('chat_transfer', {
+        toAgent: targetAgent || null,
+        toSector: targetSector || null,
+        note: transferNote || null,
+        clientName
+      }, 'chat', chatId);
 
       setSelectedAgent(null);
       setSelectedSector(null);

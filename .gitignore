@@ -25,3 +25,7 @@ dist-ssr
 
 # Debug scripts
 debug_mk_*.js
+
+# DOE Framework
+.tmp/
+.env*

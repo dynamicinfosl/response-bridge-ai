@@ -65,6 +65,9 @@ const Login = () => {
         description: error.message || "Credenciais inválidas.",
         variant: "destructive",
       });
+    } else {
+      // Log de sucesso (só funciona se o signIn já tiver estabelecido a sessão)
+      await logAuditAction('login', { email }, 'auth');
     }
   };
 

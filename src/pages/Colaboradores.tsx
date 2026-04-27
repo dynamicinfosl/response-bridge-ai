@@ -144,14 +144,12 @@ export default function Colaboradores() {
   // ── Load ────────────────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
-    console.log('🔵 [Colaboradores] load() iniciou');
     setLoading(true);
     try {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at,supervisor:supervisor_id(full_name)&order=created_at.desc`;
-      console.log('🔵 [Colaboradores] fetch URL:', url.substring(0, 80) + '...');
 
       const response = await fetch(url, {
         method: 'GET',
@@ -162,7 +160,6 @@ export default function Colaboradores() {
         },
       });
 
-      console.log('🔵 [Colaboradores] status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -172,7 +169,6 @@ export default function Colaboradores() {
       }
 
       const rows: any[] = await response.json();
-      console.log('🟢 [Colaboradores] Recebidos:', rows.length, 'users');
 
       // Processar rows para incluir supervisor_name
       const processedRows: Colaborador[] = rows.map(r => ({
@@ -191,7 +187,6 @@ export default function Colaboradores() {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setLoading(false);
-      console.log('🔵 [Colaboradores] load() finalizado');
     }
   }, []);
 
@@ -246,7 +241,6 @@ export default function Colaboradores() {
   // ── CRUD ─────────────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
-    console.log('[handleCreate] Iniciando. form:', form);
     if (!form.email || !form.full_name) {
       toast({ title: 'Preencha email e nome', variant: 'destructive' });
       return;
@@ -254,7 +248,6 @@ export default function Colaboradores() {
     setSaving(true);
     try {
       const password = form.password || `Temp${Math.random().toString(36).slice(-8)}!`;
-      console.log('[handleCreate] Chamando RPC admin_create_user...');
 
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -274,7 +267,6 @@ export default function Colaboradores() {
         })
       });
 
-      console.log('[handleCreate] fetch RPC admin_create_user retornou status:', rpcRes.status);
       
       if (!rpcRes.ok) {
         const errorText = await rpcRes.text();
@@ -283,27 +275,22 @@ export default function Colaboradores() {
       
       const newUserId = await rpcRes.json();
 
-      console.log('[handleCreate] RPC admin_create_user retornou newUserId:', newUserId);
 
       if (!newUserId) throw new Error('Usuário não criado (retorno vazio)');
 
       const userId = newUserId as string;
-      console.log('[handleCreate] Iniciando sync com Chatwoot para userId:', userId);
 
       // 🔄 Sincronizar com Chatwoot
       let chatwootId: number | null = null;
       try {
         const cwRole = (form.role === 'master' || form.role === 'admin') ? 'administrator' : 'agent';
-        console.log('[handleCreate] Chamando chatwootAPI.createAgent...');
         const cwAgent = await chatwootAPI.createAgent(form.email, form.full_name, cwRole);
-        console.log('[handleCreate] Retorno Chatwoot:', cwAgent);
         chatwootId = cwAgent?.id || null;
       } catch (cwErr) {
         console.error('Falha ao sincronizar com Chatwoot:', cwErr);
         toast({ title: 'Aviso', description: 'Usuário criado no sistema, mas houve erro ao cadastrar no Chatwoot.', variant: 'default' });
       }
 
-      console.log('[handleCreate] Iniciando fetch PATCH no Supabase...');
       // Update via fetch direto
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`,
@@ -327,7 +314,6 @@ export default function Colaboradores() {
         }
       );
 
-      console.log('[handleCreate] Retorno PATCH Supabase - ok:', response.ok);
       if (!response.ok) {
         const txt = await response.text();
         console.warn('Update após criar falhou, mas auth user foi criado. text:', txt);
@@ -336,14 +322,11 @@ export default function Colaboradores() {
       toast({ title: `Usuário criado! Senha: ${password}` });
       setCreateOpen(false);
       resetForm();
-      console.log('[handleCreate] Recarregando lista de colaboradores...');
       await load();
-      console.log('[handleCreate] Finalizado com sucesso');
     } catch (err: any) {
       console.error('[handleCreate] CRITICAL ERROR Catch:', err);
       toast({ title: 'Erro ao criar', description: err.message || JSON.stringify(err), variant: 'destructive' });
     } finally {
-      console.log('[handleCreate] Bloco FINALLY executando.');
       setSaving(false);
     }
   };
@@ -422,7 +405,6 @@ export default function Colaboradores() {
 
       // 🔐 Se a senha foi preenchida e MUDOU, altera a senha real de login via RPC
       if (form.password && form.password !== selected.password_plain) {
-        console.log('[handleEdit] Alterando senha real via RPC...');
         try {
           const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_change_user_password`, {
             method: 'POST',
@@ -446,7 +428,6 @@ export default function Colaboradores() {
               variant: 'warning' as any 
             });
           } else {
-            console.log('[handleEdit] Senha real alterada com sucesso.');
           }
         } catch (rpcErr) {
           console.error('Exceção ao mudar senha real:', rpcErr);
@@ -497,6 +478,11 @@ export default function Colaboradores() {
       toast({ title: 'Colaborador removido' });
       setDeleteOpen(false);
       setSelected(null);
+      await logAuditAction('user_delete', { 
+        email: selected.email, 
+        name: selected.full_name 
+      }, 'admin', selected.id);
+
       load();
     } catch (err: any) {
       toast({ title: 'Erro ao remover', description: err.message, variant: 'destructive' });

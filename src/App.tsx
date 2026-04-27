@@ -62,8 +62,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
           <div className="text-center">
             <h1 className="text-2xl font-bold mb-4 text-destructive">Algo deu errado</h1>
             <p className="text-muted-foreground mb-4">Ocorreu um erro inesperado. Tente recarregar a página.</p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover transition-colors"
             >
               Recarregar
@@ -101,7 +101,7 @@ const App = () => (
                 <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
                 <Route path="/configuracoes-avancadas" element={<RoleProtectedRoute allowedRoles={['master']}><ConfiguracoesAvancadas /></RoleProtectedRoute>} />
                 <Route path="/teste-n8n" element={<ProtectedRoute><TesteN8N /></ProtectedRoute>} />
-                <Route path="/router-access" element={<RouterAccess />} />
+                <Route path="/router-access" element={<RoleProtectedRoute allowedRoles={['master']}><RouterAccess /></RoleProtectedRoute>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

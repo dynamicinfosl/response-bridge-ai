@@ -299,6 +299,20 @@ const Relatorios = () => {
               <AtendimentosEncerradosTable />
             </CardContent>
           </Card>
+        ) : selectedReport === 'audit_logs' ? (
+          <Card className="shadow-card overflow-hidden">
+            <CardHeader className="bg-purple-50 border-b">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-purple-600" />
+                  Log de Auditoria e Rastreabilidade
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6">
+              <AuditLogsTable />
+            </CardContent>
+          </Card>
         ) : selectedReport === 'atendimentos' ? (
           <DashboardOverview />
         ) : (

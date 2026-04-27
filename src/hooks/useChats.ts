@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { chatwootAPI, type ChatwootConversation, type ChatwootMessage } from '../lib/chatwoot';
 import type { Chat, Message, SendMessagePayload } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { logAuditAction } from '../lib/audit';
 
 // Adaptadores para manter compatibilidade com a UI existente
 
@@ -9,27 +10,27 @@ import { supabase } from '../lib/supabase';
 const translateSystemMessage = (content: string): string => {
   if (!content) return '';
   const lower = content.toLowerCase();
-  
+
   if (lower.includes(' adicionou ')) {
     if (lower.includes('precisa_atendimento')) return 'Intervenção humana solicitada';
     if (lower.includes('agente-off')) return 'Atendimento inteligente pausado';
     return 'Configuração do atendimento atualizada';
   }
-  
+
   if (lower.includes(' removeu ')) {
     if (lower.includes('precisa_atendimento')) return 'Alerta de intervenção encerrado';
     if (lower.includes('agente-off')) return 'Atendimento inteligente reativado';
     return 'Configuração do atendimento atualizada';
   }
-  
+
   if (lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
     return 'Atendimento transferido de operador';
   }
-  
+
   if (lower.includes('marcado como resolvido') || lower.includes('marked as resolved')) {
     return 'Atendimento finalizado com sucesso';
   }
-  
+
   return 'Ação do sistema registrada';
 };
 
@@ -108,7 +109,7 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     }
     // Tenta extrair um nome real se o Chatwoot retornar apenas o tipo genérico
     let fileName = attachment.file_name || attachment.file_type || 'document';
-    
+
     if ((fileName === 'file' || !fileName.includes('.')) && attachment.data_url) {
       try {
         const urlPart = attachment.data_url.split('/').pop()?.split('?')[0];
@@ -124,26 +125,26 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     };
   }
 
-    // Define o sender. message_type === 2 indica mensagem de "Atividade" (sistema)
-    let finalSender: 'user' | 'agent' | 'activity' = msg.message_type === 0 ? 'user' : 'agent';
-    
-    // Processamento do texto para mensagens de Atividade do sistema
-    let finalContent = msg.content || '';
-    if (msg.message_type === 2) {
-      finalSender = 'activity';
-      finalContent = translateSystemMessage(finalContent);
-    }
+  // Define o sender. message_type === 2 indica mensagem de "Atividade" (sistema)
+  let finalSender: 'user' | 'agent' | 'activity' = msg.message_type === 0 ? 'user' : 'agent';
 
-    return {
-      id: msg.id.toString(),
-      chatId: msg.conversation_id.toString(),
-      content: finalContent,
-      sender: finalSender,
-      type,
-      media,
-      timestamp: new Date(msg.created_at * 1000).toISOString(),
-      read: true,
-    };
+  // Processamento do texto para mensagens de Atividade do sistema
+  let finalContent = msg.content || '';
+  if (msg.message_type === 2) {
+    finalSender = 'activity';
+    finalContent = translateSystemMessage(finalContent);
+  }
+
+  return {
+    id: msg.id.toString(),
+    chatId: msg.conversation_id.toString(),
+    content: finalContent,
+    sender: finalSender,
+    type,
+    media,
+    timestamp: new Date(msg.created_at * 1000).toISOString(),
+    read: true,
+  };
 };
 
 export function useChats() {
@@ -220,7 +221,7 @@ export function useChats() {
               }
             }
           }
-          
+
           // Injetar resumo de escalonamento para o popup
           if (escalados && escalados.length > 0) {
             const esc = escalados.find((e: any) => e.id_conversa_chatwoot === mappedChat.id);
@@ -279,13 +280,13 @@ export function useSendMessage() {
 
       // 2. Gerenciamento de etiquetas (se necessário)
       const hasNeedsHuman = data.labels?.some(l => l.toLowerCase() === 'precisa_atendimento');
-      
+
       if (hasNeedsHuman) {
         console.log('🔄 Detectada necessidade de intervenção humana. Limpando etiquetas...');
         // Filtra 'precisa_atendimento' e garante 'agente-off'
         const baseLabels = data.labels || [];
         const filteredLabels = baseLabels.filter(l => l.toLowerCase() !== 'precisa_atendimento');
-        
+
         // Adiciona agente-off se não existir
         if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {
           filteredLabels.push('agente-off');
@@ -327,16 +328,17 @@ export function useReactivateAI() {
 
   return useMutation({
     mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
-      const filteredLabels = (labels || []).filter(l => 
-        l.toLowerCase() !== 'precisa_atendimento' && 
+      const filteredLabels = (labels || []).filter(l =>
+        l.toLowerCase() !== 'precisa_atendimento' &&
         l.toLowerCase() !== 'agente-off'
       );
-      
+
       return chatwootAPI.addLabel(Number(id), filteredLabels);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
       queryClient.invalidateQueries({ queryKey: ['messages', variables.id] });
+      logAuditAction('chat_reactivate_ai', { chatId: variables.id }, 'chat', variables.id);
     },
   });
 }
@@ -347,22 +349,23 @@ export function useInterveneChat() {
   return useMutation({
     mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
       const updatedLabels = [...(labels || [])];
-      
+
       // Adiciona etiqueta de intervenção humana (alerta vermelho)
       if (!updatedLabels.some(l => l.toLowerCase() === 'precisa_atendimento')) {
         updatedLabels.push('precisa_atendimento');
       }
-      
+
       // Adiciona etiqueta para parar a IA
       if (!updatedLabels.some(l => l.toLowerCase() === 'agente-off')) {
         updatedLabels.push('agente-off');
       }
-      
+
       return chatwootAPI.addLabel(Number(id), updatedLabels);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
       queryClient.invalidateQueries({ queryKey: ['messages', variables.id] });
+      logAuditAction('chat_intervene', { chatId: variables.id }, 'chat', variables.id);
     },
   });
 }
@@ -373,20 +376,21 @@ export function useTakeOverChat() {
   return useMutation({
     mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
       // Remove etiqueta de intervenção humana
-      const filteredLabels = (labels || []).filter(l => 
+      const filteredLabels = (labels || []).filter(l =>
         l.toLowerCase() !== 'precisa_atendimento'
       );
-      
+
       // Garante que a IA fique parada enquanto o humano atende
       if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {
         filteredLabels.push('agente-off');
       }
-      
+
       return chatwootAPI.addLabel(Number(id), filteredLabels);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
       queryClient.invalidateQueries({ queryKey: ['messages', variables.id] });
+      logAuditAction('chat_takeover', { chatId: variables.id }, 'chat', variables.id);
     },
   });
 }
@@ -397,8 +401,9 @@ export function useTransferChat() {
   return useMutation({
     mutationFn: ({ id, attendantId }: { id: string; attendantId: string }) =>
       chatwootAPI.assignAgent(Number(id), Number(attendantId)),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
+      logAuditAction('chat_transfer', { chatId: variables.id, attendantId: variables.attendantId }, 'chat', variables.id);
     },
   });
 }
@@ -409,8 +414,9 @@ export function useCloseChat() {
   return useMutation({
     mutationFn: ({ id }: { id: string; reason?: string }) =>
       chatwootAPI.updateStatus(Number(id), 'resolved'),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
+      logAuditAction('chat_close_manual', { chatId: variables.id, reason: variables.reason }, 'chat', variables.id);
     },
   });
 }

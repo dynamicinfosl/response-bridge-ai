@@ -49,7 +49,9 @@ export default async function handler(req, res) {
     const contentType = response.headers.get('content-type') || 'application/json';
     const text = await response.text();
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Configuração de CORS mais segura: permite a origem que fez a requisição
+    const origin = req.headers.origin;
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, api_access_token, Authorization');
     res.setHeader('Content-Type', contentType);

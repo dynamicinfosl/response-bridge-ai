@@ -885,22 +885,26 @@ const Atendimentos = () => {
     const isTriagem = isTriagemChat(chatLabels);
     const isMasterOrAdmin = user?.role === 'master' || user?.role === 'admin';
 
-    // Se não for admin/master, aplicamos restrição
+    // Se não for admin/master, aplicamos restrição de setor/responsável
     if (!isMasterOrAdmin) {
-      const userAreaNorm = normalizeText(user?.area || '');
+      // 1.1 Sempre vê o que está atribuído diretamente a ele (independente de etiqueta)
+      const isAssignedToMe = chat.assigneeId && user?.chatwoot_id && String(chat.assigneeId) === String(user.chatwoot_id);
       
-      // Regra: Sempre vê Triagem
-      if (!isTriagem) {
-        // Se já está classificado, só vê se for do SEU setor
+      if (!isTriagem && !isAssignedToMe) {
+        // Se já está classificado em algum setor e não é o responsável direto, 
+        // só pode ver se a classificação incluir o seu próprio setor.
         const normalizedLabels = chatLabels.map(l => normalizeText(l));
         const chatSectors = normalizedLabels.filter(l => SECTOR_LABELS.includes(l));
         
         let hasAccess = false;
-        if (userAreaNorm === 'tecnica' || userAreaNorm === 'tecnico') {
-          hasAccess = chatSectors.includes('tecnico') || chatSectors.includes('tecnica') || 
-                      chatSectors.includes('s-tecnico') || chatSectors.includes('s-tecnica');
-        } else if (userAreaNorm) {
-          hasAccess = chatSectors.includes(userAreaNorm) || chatSectors.includes(`s-${userAreaNorm}`);
+        const normalizedUserArea = normalizeText(user?.area || '');
+
+        if (normalizedUserArea === 'tecnica' || normalizedUserArea === 'tecnico') {
+          // Robustez para setor técnico (suporta técnica, técnico, s-tecnico, etc)
+          hasAccess = chatSectors.some(s => s.includes('tecnic') || s.includes('s-tecnic'));
+        } else if (normalizedUserArea) {
+          // Outros setores (comercial, financeiro)
+          hasAccess = chatSectors.some(s => s.includes(normalizedUserArea));
         }
         
         if (!hasAccess) return false;
@@ -1461,6 +1465,7 @@ const Atendimentos = () => {
                                   id: selectedChatData.id,
                                   labels: selectedChatData.labels
                                 });
+                                logAuditAction('chat_intervene', { clientName: formatClientName(selectedChatData) }, 'chat', selectedChatData.id);
                               }}
                               disabled={interveneChatMutation.isPending}
                             >
