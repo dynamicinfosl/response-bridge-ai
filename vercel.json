@@ -9,6 +9,18 @@
       "destination": "/api/mk/[...path]"
     },
     {
+      "source": "/api/audio",
+      "destination": "/api/audio"
+    },
+    {
+      "source": "/encoderWorker.min.js",
+      "destination": "/encoderWorker.min.js"
+    },
+    {
+      "source": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|pdf|webm|ogg|mp3|mp4|wasm|json))",
+      "destination": "/$1"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
