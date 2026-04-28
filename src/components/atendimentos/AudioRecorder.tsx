@@ -68,7 +68,7 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
         // entre Uint8Array<ArrayBufferLike> e BlobPart no TS estrito.
         const buf = new ArrayBuffer(typedArray.byteLength);
         new Uint8Array(buf).set(typedArray);
-        const blob = new Blob([buf], { type: 'audio/ogg' });
+        const blob = new Blob([buf], { type: 'audio/ogg; codecs=opus' });
         console.log('[AudioRecorder] Áudio OGG/Opus gerado:', {
           size: blob.size,
           type: blob.type,
