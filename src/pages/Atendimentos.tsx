@@ -84,7 +84,21 @@ const WhatsAppAudioPlayer = ({ url }: { url: string }) => {
 
   const handleLoadedMetadata = () => {
     if (audioRef.current) {
-      setDuration(audioRef.current.duration);
+      const d = audioRef.current.duration;
+      // WebM gravado pelo MediaRecorder pode ter duração Infinity por falta de
+      // metadata. Truque: forçar seek para o final, esperar timeupdate, voltar.
+      if (d === Infinity || isNaN(d)) {
+        const audio = audioRef.current;
+        const onSeeked = () => {
+          audio.currentTime = 0;
+          setDuration(audio.duration);
+          audio.removeEventListener('seeked', onSeeked);
+        };
+        audio.addEventListener('seeked', onSeeked);
+        audio.currentTime = 1e10;
+      } else {
+        setDuration(d);
+      }
     }
   };
 

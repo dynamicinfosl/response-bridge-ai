@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Mic, X, Send, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import fixWebmDuration from 'fix-webm-duration';
 
 interface AudioRecorderProps {
   chatId: string;
@@ -19,6 +20,7 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const startTimeRef = useRef<number>(0);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -83,12 +85,26 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const finalType = mediaRecorder.mimeType || mimeType || 'audio/webm';
-        const blob = new Blob(chunksRef.current, { type: finalType });
+        const recordedDurationMs = Date.now() - startTimeRef.current;
+        let blob = new Blob(chunksRef.current, { type: finalType });
+
+        // Corrige metadata de duração no container WebM (MediaRecorder não escreve)
+        // Sem esta correção, o player exibe "Infinity:NaN" e alguns clientes não
+        // conseguem reproduzir o áudio.
+        if (finalType.includes('webm')) {
+          try {
+            blob = await fixWebmDuration(blob, recordedDurationMs, { logger: false });
+          } catch (e) {
+            console.warn('[AudioRecorder] Falha ao corrigir duração do WebM:', e);
+          }
+        }
+
         console.log('[AudioRecorder] Áudio gravado:', {
           size: blob.size,
           type: finalType,
+          durationMs: recordedDurationMs,
           chunks: chunksRef.current.length,
         });
         if (blob.size > 0) {
@@ -102,6 +118,7 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
 
       // Timeslice de 250ms garante que ondataavailable seja chamado
       // periodicamente, evitando blobs vazios/corrompidos em alguns navegadores
+      startTimeRef.current = Date.now();
       mediaRecorder.start(250);
       setIsRecording(true);
       setDuration(0);
