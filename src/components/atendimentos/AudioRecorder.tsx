@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Mic, X, Send, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import fixWebmDuration from 'fix-webm-duration';
+import Recorder from 'opus-recorder';
 
 interface AudioRecorderProps {
   chatId: string;
@@ -16,11 +16,9 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
   const [duration, setDuration] = useState(0);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const recorderRef = useRef<any>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const startTimeRef = useRef<number>(0);
+  const cancelledRef = useRef<boolean>(false);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -29,12 +27,12 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
   };
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+    if (recorderRef.current) {
+      try {
+        recorderRef.current.stop();
+      } catch (e) {
+        console.warn('[AudioRecorder] stop error:', e);
+      }
     }
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -45,117 +43,83 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
 
   const startRecording = async () => {
     try {
-      chunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000,
-        },
-      });
-      streamRef.current = stream;
-      setHasPermission(true);
+      cancelledRef.current = false;
 
-      // Verifica se a stream tem tracks de áudio ativas
-      const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length === 0 || !audioTracks[0].enabled) {
-        console.error('Nenhuma track de áudio ativa na stream');
+      // Verifica suporte (Recorder.isRecordingSupported usa AudioContext + Worker)
+      if (!Recorder.isRecordingSupported()) {
+        console.error('[AudioRecorder] Navegador não suporta gravação OGG/Opus');
+        setHasPermission(false);
         onCancel();
         return;
       }
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-            ? 'audio/mp4'
-            : '';
+      const recorder = new Recorder({
+        encoderPath: '/encoderWorker.min.js',
+        encoderApplication: 2048, // VOIP — ideal para voz
+        encoderSampleRate: 48000,
+        numberOfChannels: 1,
+        encoderBitRate: 32000, // 32 kbps mono é suficiente para voz e mantém arquivo pequeno
+        streamPages: false, // entrega tudo num único Blob no ondataavailable
+      });
 
-      const mediaRecorder = mimeType
-        ? new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 })
-        : new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const finalType = mediaRecorder.mimeType || mimeType || 'audio/webm';
-        const recordedDurationMs = Date.now() - startTimeRef.current;
-        let blob = new Blob(chunksRef.current, { type: finalType });
-
-        // Corrige metadata de duração no container WebM (MediaRecorder não escreve)
-        // Sem esta correção, o player exibe "Infinity:NaN" e alguns clientes não
-        // conseguem reproduzir o áudio.
-        if (finalType.includes('webm')) {
-          try {
-            blob = await fixWebmDuration(blob, recordedDurationMs, { logger: false });
-          } catch (e) {
-            console.warn('[AudioRecorder] Falha ao corrigir duração do WebM:', e);
-          }
-        }
-
-        console.log('[AudioRecorder] Áudio gravado:', {
+      recorder.ondataavailable = (typedArray: Uint8Array) => {
+        if (cancelledRef.current) return;
+        // Copia para um ArrayBuffer "fresco" para evitar incompatibilidade
+        // entre Uint8Array<ArrayBufferLike> e BlobPart no TS estrito.
+        const buf = new ArrayBuffer(typedArray.byteLength);
+        new Uint8Array(buf).set(typedArray);
+        const blob = new Blob([buf], { type: 'audio/ogg' });
+        console.log('[AudioRecorder] Áudio OGG/Opus gerado:', {
           size: blob.size,
-          type: finalType,
-          durationMs: recordedDurationMs,
-          chunks: chunksRef.current.length,
+          type: blob.type,
         });
         if (blob.size > 0) {
           onSend(blob);
         } else {
           console.warn('[AudioRecorder] Blob vazio — gravação não capturou dados');
         }
-        chunksRef.current = [];
-        stream.getTracks().forEach(track => track.stop());
       };
 
-      // Timeslice de 250ms garante que ondataavailable seja chamado
-      // periodicamente, evitando blobs vazios/corrompidos em alguns navegadores
-      startTimeRef.current = Date.now();
-      mediaRecorder.start(250);
-      setIsRecording(true);
-      setDuration(0);
+      recorder.onstart = () => {
+        setIsRecording(true);
+        setDuration(0);
+        timerRef.current = setInterval(() => {
+          setDuration(prev => prev + 1);
+        }, 1000);
+      };
 
-      timerRef.current = setInterval(() => {
-        setDuration(prev => prev + 1);
-      }, 1000);
+      recorder.onstop = () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        setIsRecording(false);
+      };
+
+      recorderRef.current = recorder;
+
+      await recorder.start();
+      setHasPermission(true);
     } catch (err) {
-      console.error('Erro ao acessar microfone:', err);
+      console.error('Erro ao iniciar gravação:', err);
       setHasPermission(false);
       onCancel();
     }
   };
 
   const handleCancel = () => {
-    if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.onstop = () => {
-          chunksRef.current = [];
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-          }
-        };
-        mediaRecorderRef.current.stop();
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      setIsRecording(false);
-      setDuration(0);
+    cancelledRef.current = true;
+    if (recorderRef.current) {
+      try {
+        recorderRef.current.stop();
+      } catch { /* noop */ }
     }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsRecording(false);
+    setDuration(0);
     onCancel();
   };
 
@@ -164,13 +128,12 @@ export function AudioRecorder({ chatId, onSend, onCancel, isLoading }: AudioReco
   };
 
   useEffect(() => {
-    // Inicia a gravação automaticamente assim que o componente monta
     startRecording();
-
     return () => {
+      cancelledRef.current = true;
       if (timerRef.current) clearInterval(timerRef.current);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+      if (recorderRef.current) {
+        try { recorderRef.current.stop(); } catch { /* noop */ }
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
