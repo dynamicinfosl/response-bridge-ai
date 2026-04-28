@@ -1,10 +1,25 @@
 /**
  * Vercel Serverless Function — Proxy para Chatwoot
- * 
+ *
  * Rota: /api/chatwoot/[...path]
  * Qualquer requisição para /api/chatwoot/* é encaminhada server-side para o Chatwoot real,
  * evitando o erro de CORS que ocorre quando o browser tenta acessar diretamente.
  */
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 export default async function handler(req, res) {
   const chatwootBase = process.env.VITE_CHATWOOT_API_URL;
   const apiToken = process.env.VITE_CHATWOOT_API_TOKEN;
@@ -20,13 +35,13 @@ export default async function handler(req, res) {
 
   // Monta os headers repassando o token
   const headers = {
-    'Content-Type': 'application/json',
     'api_access_token': apiToken,
   };
 
-  // Remove content-type se for multipart (uploads)
-  if (req.headers['content-type']?.includes('multipart/form-data')) {
-    headers['Content-Type'] = req.headers['content-type'];
+  // Preserva Content-Type original (obrigatório para multipart/form-data)
+  const incomingContentType = req.headers['content-type'];
+  if (incomingContentType) {
+    headers['Content-Type'] = incomingContentType;
   }
 
   try {
@@ -35,11 +50,11 @@ export default async function handler(req, res) {
       headers,
     };
 
-    // Repassa o body para POST/PATCH/PUT
+    // Repassa o body raw para POST/PATCH/PUT
     if (['POST', 'PATCH', 'PUT'].includes(req.method)) {
-      // O body já vem parseado pelo Vercel como objeto; re-serializa
-      if (req.body) {
-        fetchOptions.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+      const bodyBuffer = await readBody(req);
+      if (bodyBuffer.length > 0) {
+        fetchOptions.body = bodyBuffer;
       }
     }
 
