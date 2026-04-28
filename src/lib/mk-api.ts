@@ -204,10 +204,14 @@ export async function consultaDoc(doc: string): Promise<MKClienteDoc | MKCliente
   );
   if (Array.isArray(raw)) return raw.map(mapClienteMK);
   if (raw && typeof raw === 'object') {
+    // Ignora respostas de erro da API (ex: {status: "ERRO", Mensagem: "Documento não localizado."})
+    if (raw.status === 'ERRO' || raw.status === 'erro') {
+      return [];
+    }
     if ('cd_cliente' in raw || 'nome' in raw || 'CodigoPessoa' in raw) {
       return mapClienteMK(raw);
     }
-    // Explora o primeiro array encontado (geralmente .clientes ou .data)
+    // Explora o primeiro array encontrado (geralmente .clientes ou .data)
     for (const key of Object.keys(raw)) {
       if (Array.isArray(raw[key])) {
         return raw[key].map(mapClienteMK);
@@ -215,7 +219,7 @@ export async function consultaDoc(doc: string): Promise<MKClienteDoc | MKCliente
     }
     return [mapClienteMK(raw)];
   }
-  return {};
+  return [];
 }
 
 /** Consulta pessoa pelo nome (WSMKConsultaNome) */
@@ -318,41 +322,50 @@ export async function segundaViaFatura(cd_fatura: string | number): Promise<any>
 
 /** Faturas pendentes do cliente (WSMKFaturasPendentes) */
 export async function faturasPendentes(cd_cliente: string): Promise<MKInvoice[]> {
-  // A API as vezes exige cd_pessoa ou cd_cliente dependendo da versão
-  const raw = await mkFetch<unknown>('/mk/WSMKFaturasPendentes.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
-  return extractArray<any>(raw).map(mapInvoiceMK);
+  try {
+    const raw = await mkFetch<unknown>('/mk/WSMKFaturasPendentes.rule', { cd_cliente });
+    return extractArray<any>(raw).map(mapInvoiceMK);
+  } catch {
+    return [];
+  }
 }
 
-/** Faturas Pagas do cliente */
+/** Faturas Pagas do cliente (WSMKFaturasPagas) */
 export async function faturasPagas(cd_cliente: string): Promise<MKInvoice[]> {
   try {
-    const raw = await mkFetch<unknown>('/mk/WSMKFaturasPagas.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
+    const raw = await mkFetch<unknown>('/mk/WSMKFaturasPagas.rule', { cd_cliente });
     return extractArray<any>(raw).map(mapInvoiceMK);
-  } catch (err) {
-    console.warn('API de Faturas Pagas não disponível ou erro:', err);
+  } catch {
     return [];
   }
 }
 
 /** Contratos por cliente (WSMKContratosPorCliente) */
 export async function contratosPorCliente(cd_cliente: string): Promise<MKContract[]> {
-  const raw = await mkFetch<unknown>('/mk/WSMKContratosPorCliente.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
-  return extractArray<MKContract>(raw);
+  try {
+    const raw = await mkFetch<unknown>('/mk/WSMKContratosPorCliente.rule', { cd_cliente });
+    return extractArray<MKContract>(raw);
+  } catch {
+    return [];
+  }
 }
 
 /** Conexões por cliente (WSMKConexoesPorCliente) */
 export async function conexoesPorCliente(cd_cliente: string): Promise<MKConnection[]> {
-  const raw = await mkFetch<unknown>('/mk/WSMKConexoesPorCliente.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
-  return extractArray<any>(raw).map(mapConnectionMK);
+  try {
+    const raw = await mkFetch<unknown>('/mk/WSMKConexoesPorCliente.rule', { cd_cliente });
+    return extractArray<any>(raw).map(mapConnectionMK);
+  } catch {
+    return [];
+  }
 }
 
-/** Histórico de Conexão */
+/** Histórico de Conexão (WSMKHistoricoConexao) */
 export async function historicoConexao(cd_cliente: string): Promise<MKConnection[]> {
   try {
-    const raw = await mkFetch<unknown>('/mk/WSMKHistoricoConexao.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
+    const raw = await mkFetch<unknown>('/mk/WSMKHistoricoConexao.rule', { cd_cliente });
     return extractArray<MKConnection>(raw);
-  } catch(err) {
-    console.warn('API de Histórico de Conexão não disponível ou erro:', err);
+  } catch {
     return [];
   }
 }
@@ -360,22 +373,19 @@ export async function historicoConexao(cd_cliente: string): Promise<MKConnection
 /** Processos/Chamados de Atendimento (WSMKListaProcessos) */
 export async function processosAtendimento(cd_cliente: string): Promise<MKProcess[]> {
   try {
-    // Tenta primeiro WSMKListaProcessos, se falhar ou não retornar, pode não suportar filtro por cliente direto, mas tentamos.
-    const raw = await mkFetch<unknown>('/mk/WSMKListaProcessos.rule', { cd_cliente, cd_pessoa: cd_cliente, CodigoPessoa: cd_cliente });
+    const raw = await mkFetch<unknown>('/mk/WSMKListaProcessos.rule', { cd_cliente });
     return extractArray<MKProcess>(raw);
-  } catch(err) {
-     console.warn('API de Processos não disponível ou erro:', err);
-     return [];
+  } catch {
+    return [];
   }
 }
 
-/** Consulta Conexão Autenticada (WSMKConsultaConexaoAutenticada) para pegar o IP do roteador */
+/** Consulta Conexão Autenticada (WSMKConsultaConexaoAutenticada) */
 export async function consultaConexaoAutenticada(cd_conexao: string | number): Promise<any> {
   try {
-    const raw = await mkFetch<any>('/mk/WSMKConsultaConexaoAutenticada.rule', { codconexao: String(cd_conexao), cd_conexao: String(cd_conexao) });
+    const raw = await mkFetch<any>('/mk/WSMKConsultaConexaoAutenticada.rule', { cd_conexao: String(cd_conexao) });
     return raw;
-  } catch(err) {
-    console.error('Erro ao consultar conexão autenticada:', err);
-    throw err;
+  } catch {
+    return null;
   }
 }

@@ -65,11 +65,16 @@ const mapChatwootToChat = (conv: any): Chat => {
   } else if (lastMsg?.attachments?.length > 0) {
     const fileType = lastMsg.attachments[0].file_type || '';
     let prefix = '📄 Documento';
-    if (fileType === 'image') prefix = '📷 Foto';
+    if (fileType === 'image') prefix = '📷 Imagem';
     else if (fileType === 'video') prefix = '🎥 Vídeo';
     else if (fileType === 'audio') prefix = '🎵 Áudio';
 
-    lastMsgContent = lastMsgContent.trim() ? `${prefix} - ${lastMsgContent}` : prefix;
+    // Se o conteúdo for apenas um rótulo automático de mídia, não duplica
+    const mediaLabels = ['imagem', 'foto', 'mensagem de voz', 'vídeo', 'video', 'arquivo pdf', 'figurinha', 'mídia', 'midia', 'áudio', 'audio', 'documento'];
+    const trimmed = lastMsgContent.trim();
+    const isMediaLabel = trimmed && mediaLabels.includes(trimmed.toLowerCase());
+
+    lastMsgContent = trimmed && !isMediaLabel ? `${prefix} - ${trimmed}` : prefix;
   }
 
   const lastMsgSender = lastMsg ? (lastMsg.message_type === 0 ? 'user' : 'agent') : undefined;
@@ -417,6 +422,21 @@ export function useCloseChat() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
       logAuditAction('chat_close_manual', { chatId: variables.id, reason: variables.reason }, 'chat', variables.id);
+    },
+  });
+}
+
+export function useSendAttachment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ chatId, file, content = '' }: { chatId: string; file: File; content?: string }) => {
+      const response = await chatwootAPI.sendAttachment(Number(chatId), file, content);
+      return response;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['messages', variables.chatId] });
+      queryClient.invalidateQueries({ queryKey: ['chats'] });
     },
   });
 }

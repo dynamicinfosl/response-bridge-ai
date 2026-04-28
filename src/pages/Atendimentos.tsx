@@ -31,11 +31,16 @@ import {
   Pause,
   AlertCircle,
   ExternalLink,
-  X
+  X,
+  Mic,
+  Video,
+  Paperclip,
+  Image as ImageIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat, useTakeOverChat } from '@/hooks/useChats';
+import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat, useTakeOverChat, useSendAttachment } from '@/hooks/useChats';
+import { AudioRecorder } from '@/components/atendimentos/AudioRecorder';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Loader2 } from 'lucide-react';
@@ -149,6 +154,7 @@ const Atendimentos = () => {
   const isMobile = useIsMobile();
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [messageText, setMessageText] = useState('');
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -162,6 +168,7 @@ const Atendimentos = () => {
   const [showMkPanel, setShowMkPanel] = useState(false);
   const [suggestedMessage, setSuggestedMessage] = useState<string | null>(null);
   const [chatMKMap, setChatMKMap] = useState<Record<string, { cd: string; cliente: MKClienteDoc }>>({});
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   
   // Identidade derivada do chat selecionado
   const currentMKIdentity = selectedChat ? chatMKMap[selectedChat] : null;
@@ -180,6 +187,7 @@ const Atendimentos = () => {
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastMessageCountRef = useRef<number>(0);
   const lastMessageSignatureRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Controle local de contagem de não lidas para maior confiabilidade
   const [localUnread, setLocalUnread] = useState<Record<string, number>>({});
@@ -189,6 +197,24 @@ const Atendimentos = () => {
   const { data: chatsData, isLoading: chatsLoading, error: chatsError } = useChats();
   const { data: messagesData, isLoading: messagesLoading } = useMessages(selectedChat);
   const sendMessageMutation = useSendMessage();
+  const sendAttachmentMutation = useSendAttachment();
+
+  const handleSendAudio = (blob: Blob) => {
+    if (!selectedChat) return;
+    const file = new File([blob], 'audio.webm', { type: blob.type || 'audio/webm' });
+    sendAttachmentMutation.mutate(
+      { chatId: selectedChat, file, content: '' },
+      {
+        onSuccess: () => {
+          setShowAudioRecorder(false);
+        },
+        onError: (err) => {
+          toast.error('Erro ao enviar áudio');
+          console.error(err);
+        },
+      }
+    );
+  };
   const markAsReadMutation = useMarkAsRead();
   const updateStatusMutation = useUpdateChatStatus();
   const reactivateAIMutation = useReactivateAI();
@@ -198,37 +224,72 @@ const Atendimentos = () => {
   // Hook para dados rápidos do MK no cabeçalho
   const { data: mkSummaryData, isLoading: mkSummaryLoading } = useClienteResumo(cdClienteMK, clienteMK, !!cdClienteMK);
 
-  // Cálculo global de Previsão de Vencimento de Contrato para o cabeçalho (<= 60 dias)
+  // Cálculo global de Previsão de Vencimento de Contrato para o cabeçalho
+  // Prioridade: 1) internet/plano ativo com vencimento futuro,
+  //              2) qualquer contrato ativo com vencimento futuro,
+  //              3) contrato de internet menos vencido,
+  //              4) contrato menos vencido (fallback).
   const soonestExpiringMKHeader = (() => {
-    if (!mkSummaryData?.contratos) return null;
-    let result: { diffDays: number; fim: string } | null = null;
-    
-    mkSummaryData.contratos.forEach((c: any) => {
-      const status = String(c.status || c.situacao || '').toLowerCase();
-      const isActive = status === '' || status.includes('ativ') || status.includes('ok') || status.includes('norm');
-      if (!isActive) return;
+    if (!mkSummaryData?.contratos || mkSummaryData.contratos.length === 0) return null;
 
-      const fim = c.previsao_vencimento || c.vencimento_contrato || c.data_cancelamento || c.dt_cancelamento || c.data_vencimento || c.dt_vencimento || c.vencimento_plano;
-      if (fim) {
-        let d = new Date(fim);
-        if (typeof fim === 'string' && fim.includes('/') && fim.split('/').length === 3) {
-           const parts = fim.split(' ')[0].split('/');
-           d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
-        }
-        if (!isNaN(d.getTime())) {
-          const now = new Date();
-          now.setHours(0,0,0,0);
-          const diffDays = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-          
-          if (diffDays <= 60) {
-            if (!result || diffDays < result.diffDays) {
-               result = { diffDays, fim };
-            }
-          }
-        }
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    const calcDiff = (fim: string): number | null => {
+      if (!fim) return null;
+      let d = new Date(fim);
+      if (typeof fim === 'string' && fim.includes('/') && fim.split('/').length === 3) {
+        const parts = fim.split(' ')[0].split('/');
+        d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
       }
+      if (isNaN(d.getTime())) return null;
+      return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    };
+
+    const isInternetContract = (c: any): boolean => {
+      const plano = String(c.plano_acesso || c.descricao || c.plano || '').toLowerCase();
+      return /\b(mb|mega|giga|fibra|conex|internet|banda|wifi|broadband|veloc|adapt|p\.a\.?|plano)\b/i.test(plano);
+    };
+
+    const activeContracts = mkSummaryData.contratos.filter((c: any) => {
+      const status = String(c.status || c.situacao || '').toLowerCase();
+      return status === '' || status.includes('ativ') || status.includes('ok') || status.includes('norm') || status.includes('instal') || status.includes('fidel');
     });
-    return result;
+
+    const withDate = activeContracts
+      .map((c: any) => {
+        const fim = c.previsao_vencimento || c.vencimento_contrato || c.data_cancelamento || c.dt_cancelamento || c.data_vencimento || c.dt_vencimento || c.vencimento_plano;
+        const diff = calcDiff(fim);
+        return diff !== null ? { ...c, diffDays: diff, fim } : null;
+      })
+      .filter(Boolean) as any[];
+
+    if (withDate.length === 0) return null;
+
+    // Prioridade 1: contratos de internet/plano com vencimento no futuro (ou tolerância de 30 dias vencidos)
+    const internetRecent = withDate.filter((c) => isInternetContract(c) && c.diffDays >= -30);
+    if (internetRecent.length > 0) {
+      const best = internetRecent.reduce((a, b) => (a.diffDays < b.diffDays ? a : b));
+      return { diffDays: best.diffDays, fim: best.fim };
+    }
+
+    // Prioridade 2: qualquer contrato com vencimento no futuro
+    const anyFuture = withDate.filter((c) => c.diffDays >= 0);
+    if (anyFuture.length > 0) {
+      const best = anyFuture.reduce((a, b) => (a.diffDays < b.diffDays ? a : b));
+      return { diffDays: best.diffDays, fim: best.fim };
+    }
+
+    // Prioridade 3: contratos de internet menos vencidos
+    const internetAny = withDate.filter((c) => isInternetContract(c));
+    if (internetAny.length > 0) {
+      const best = internetAny.reduce((a, b) => (a.diffDays > b.diffDays ? a : b));
+      return { diffDays: best.diffDays, fim: best.fim };
+    }
+
+    // Fallback: contrato menos vencido entre todos
+    const best = withDate.reduce((a, b) => (a.diffDays > b.diffDays ? a : b));
+    return { diffDays: best.diffDays, fim: best.fim };
   })();
 
   const { user } = useAuth();
@@ -271,39 +332,124 @@ const Atendimentos = () => {
 
   // Auto-detecção de CPF nas mensagens
   useEffect(() => {
-    if (selectedChat && messagesData && messagesData.length > 0 && !cdClienteMK) {
-      const cpfRegex = /\d{3}\.?\d{3}\.?\d{3}-?\d{2}/;
-      // Procura nas últimas 50 mensagens
-      const contentPool = [ ...messagesData ].reverse().slice(0, 50);
-      for (const msg of contentPool) {
-        const match = msg.content?.match(cpfRegex);
-        if (match) {
-          const foundCpf = match[0].replace(/\D/g, '');
-          consultaDoc(foundCpf).then(r => {
-            const arr = Array.isArray(r) ? r : r ? [r] : [];
-            const first = arr[0];
-            if (first) {
-              const cd = String(
-                (first as any).cd_cliente ?? 
-                (first as any).cdcliente ?? 
-                (first as any).CodigoPessoa ?? 
-                (first as any).CodPessoa ?? 
-                (first as any).idPessoa ?? 
-                (first as any).id ?? 
-                ''
-              );
-              if (cd) {
-                setChatMKMap(prev => ({
-                  ...prev,
-                  [selectedChat]: { cd, cliente: first as MKClienteDoc }
-                }));
-              }
-            }
-          }).catch(() => { /* falha silenciosa no auto */ });
-          break;
+    if (!selectedChat || !messagesData || messagesData.length === 0 || cdClienteMK) return;
+
+    // Valida CPF real (checksum oficial)
+    const isValidCPF = (digits: string): boolean => {
+      if (digits.length !== 11) return false;
+      if (/(\d)\1{10}/.test(digits)) return false;
+      let sum = 0;
+      for (let i = 0; i < 9; i++) sum += parseInt(digits[i]) * (10 - i);
+      let d1 = 11 - (sum % 11);
+      if (d1 >= 10) d1 = 0;
+      if (d1 !== parseInt(digits[9])) return false;
+      sum = 0;
+      for (let i = 0; i < 10; i++) sum += parseInt(digits[i]) * (11 - i);
+      let d2 = 11 - (sum % 11);
+      if (d2 >= 10) d2 = 0;
+      return d2 === parseInt(digits[10]);
+    };
+
+    // Detecta se 11 dígitos seguem padrão de celular BR (DDD>=11 + terceiro dígito 9)
+    const looksLikePhone = (digits: string): boolean => {
+      if (digits.length !== 11) return false;
+      const ddd = parseInt(digits.substring(0, 2), 10);
+      return ddd >= 11 && digits[2] === '9';
+    };
+
+    // 1) CPF FORMATADO (XXX.XXX.XXX-XX) — impossível confundir com telefone
+    const cpfFormatado = /(?<!\d)(\d{3}\.\d{3}\.\d{3}-\d{2})(?!\d)/g;
+    // 2) CPF após palavra-chave (cpf, documento, doc) — 11 dígitos puros com contexto
+    const cpfComContexto = /(?:cpf|documento|doc)\s*[:=]?\s*(\d{11})(?!\d)/gi;
+    // 3) 11 dígitos puros isolados — aceita se NÃO parecer telefone
+    const digitos11 = /(?<!\d)(\d{11})(?!\d)/g;
+
+    const contentPool = [...messagesData].reverse().slice(0, 50);
+    const candidates: string[] = [];
+
+    // Primeiro: coleta CPFs formatados (alta confiança)
+    for (const msg of contentPool) {
+      const content = msg.content;
+      if (!content) continue;
+      for (const m of content.matchAll(cpfFormatado)) {
+        const digits = m[1].replace(/\D/g, '');
+        if (isValidCPF(digits) && !candidates.includes(digits)) {
+          candidates.push(digits);
         }
       }
     }
+
+    // Segundo: coleta CPFs com contexto textual (média confiança)
+    if (candidates.length === 0) {
+      for (const msg of contentPool) {
+        const content = msg.content;
+        if (!content) continue;
+        for (const m of content.matchAll(cpfComContexto)) {
+          const digits = m[1];
+          if (isValidCPF(digits) && !candidates.includes(digits)) {
+            candidates.push(digits);
+          }
+        }
+      }
+    }
+
+    // Terceiro: 11 dígitos puros que NÃO parecem telefone celular (baixa confiança)
+    if (candidates.length === 0) {
+      for (const msg of contentPool) {
+        const content = msg.content;
+        if (!content) continue;
+        for (const m of content.matchAll(digitos11)) {
+          const digits = m[1];
+          if (!looksLikePhone(digits) && isValidCPF(digits) && !candidates.includes(digits)) {
+            console.log('[Auto-CPF] 11 dígitos detectados (não parece telefone):', digits);
+            candidates.push(digits);
+          }
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      console.log('[Auto-CPF] Nenhum CPF válido encontrado nas últimas 50 mensagens.');
+      return;
+    }
+
+    console.log('[Auto-CPF] CPFs candidatos:', candidates);
+
+    let cancelled = false;
+    (async () => {
+      for (const cpf of candidates) {
+        if (cancelled) return;
+        try {
+          const r = await consultaDoc(cpf);
+          const arr = Array.isArray(r) ? r : r ? [r] : [];
+          const first = arr[0] as any;
+          const cd = first ? String(
+            first.cd_cliente ??
+            first.cdcliente ??
+            first.CodigoPessoa ??
+            first.CodPessoa ??
+            first.idPessoa ??
+            first.id ??
+            ''
+          ) : '';
+          if (cd) {
+            console.log('[Auto-CPF] Cliente encontrado:', cd, first?.nome, 'CPF:', cpf);
+            if (!cancelled) {
+              setChatMKMap(prev => ({
+                ...prev,
+                [selectedChat]: { cd, cliente: first as MKClienteDoc }
+              }));
+            }
+            return;
+          }
+          console.log('[Auto-CPF] CPF válido mas não encontrado no MK:', cpf);
+        } catch (err) {
+          console.error('[Auto-CPF] Erro ao consultar MK para', cpf, ':', err);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [selectedChat, messagesData, cdClienteMK]);
 
   // Garantir que chats é sempre um array e normalizar os dados
@@ -1366,7 +1512,7 @@ const Atendimentos = () => {
                             ) : null
                           ) : null}
                         </div>
-                        <p className="text-[10px] sm:text-xs text-muted-foreground truncate">
+                        <p className="text-[10px] text-muted-foreground truncate">
                           {formatPhoneNumber(selectedChatData.phone, selectedChatData.id)}
                         </p>
                         <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 overflow-x-auto no-scrollbar">
@@ -1796,13 +1942,33 @@ const Atendimentos = () => {
                                   // Filtrar conteúdo de placeholder ("file" ou vindo vazio)
                                   const hasRichContent = message.content && message.content.toLowerCase() !== 'file' && message.content.trim() !== '';
 
+                                  // Detecta se o conteúdo é apenas um rótulo de mídia automático
+                                  const mediaLabels = ['imagem', 'mensagem de voz', 'vídeo', 'video', 'arquivo pdf', 'figurinha', 'mídia', 'midia'];
+                                  const isMediaLabel = hasRichContent
+                                    && message.type !== 'text'
+                                    && message.media
+                                    && mediaLabels.includes(message.content.trim().toLowerCase());
+
                                   return (
                                     <div className="flex flex-col gap-2">
                                       {/* Se houver texto acompanhando a mídia */}
-                                      {hasRichContent && (
+                                      {hasRichContent && !isMediaLabel && (
                                         <p className="text-[14.2px] leading-[19px] whitespace-pre-wrap break-words">
                                           {message.content}
                                         </p>
+                                      )}
+
+                                      {/* Rótulo estilizado de tipo de mídia */}
+                                      {isMediaLabel && (
+                                        <div className="inline-flex items-center gap-1.5 self-start px-2 py-0.5 rounded-full bg-black/[0.04] border border-black/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]">
+                                          {message.type === 'image' && <ImageIcon className="w-3 h-3 text-blue-500/80" />}
+                                          {message.type === 'audio' && <Mic className="w-3 h-3 text-purple-500/80" />}
+                                          {message.type === 'video' && <Video className="w-3 h-3 text-orange-500/80" />}
+                                          {message.type === 'document' && <FileText className="w-3 h-3 text-red-500/80" />}
+                                          <span className="text-[11px] font-medium text-[#54656f] tracking-tight">
+                                            {message.content}
+                                          </span>
+                                        </div>
                                       )}
 
                                       {/* Renderizar mídias */}
@@ -1812,7 +1978,7 @@ const Atendimentos = () => {
                                             src={message.media.url}
                                             alt={message.media.name}
                                             className="max-w-full h-auto cursor-pointer hover:opacity-95 transition-opacity max-h-[300px] object-contain"
-                                            onClick={() => window.open(message.media.url, '_blank')}
+                                            onClick={() => setLightboxImage(message.media.url)}
                                           />
                                         </div>
                                       )}
@@ -2046,30 +2212,79 @@ const Atendimentos = () => {
 
                   {/* Message Input - Estilo WhatsApp */}
                   <div className="p-3 bg-[#f0f2f5] border-t border-[#e9edef]">
-                    <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-white rounded-lg">
-                      <Input
-                        placeholder="Digite uma mensagem"
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                        className="border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent h-11"
+                    {showAudioRecorder && selectedChat ? (
+                      <AudioRecorder
+                        chatId={selectedChat}
+                        onSend={handleSendAudio}
+                        onCancel={() => setShowAudioRecorder(false)}
+                        isLoading={sendAttachmentMutation.isPending}
                       />
-                    </div>
-                    <Button
-                      onClick={handleSendMessage}
-                      disabled={!messageText.trim()}
-                      className={cn(
-                        "h-11 w-11 p-0 rounded-full",
-                        messageText.trim()
-                          ? "bg-[#25d366] hover:bg-[#20ba5a]"
-                          : "bg-[#8696a0] hover:bg-[#667781]"
-                      )}
-                    >
-                      <Send className="w-5 h-5 text-white" />
-                    </Button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 p-0 rounded-full flex-shrink-0 text-[#54656f] hover:bg-[#d1d7db]"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={sendAttachmentMutation.isPending}
+                        >
+                          <Paperclip className="w-5 h-5" />
+                        </Button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file && selectedChat) {
+                              sendAttachmentMutation.mutate(
+                                { chatId: selectedChat, file, content: '' },
+                                {
+                                  onSuccess: () => {
+                                    toast.success('Anexo enviado');
+                                  },
+                                  onError: (err) => {
+                                    toast.error('Erro ao enviar anexo');
+                                    console.error(err);
+                                  },
+                                }
+                              );
+                            }
+                            if (e.target) e.target.value = '';
+                          }}
+                        />
+                        <div className="flex-1 bg-white rounded-lg">
+                          <Input
+                            placeholder="Digite uma mensagem"
+                            value={messageText}
+                            onChange={(e) => setMessageText(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                            className="border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent h-11"
+                          />
+                        </div>
+                        <Button
+                          onClick={() => setShowAudioRecorder(true)}
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 p-0 rounded-full flex-shrink-0 text-[#54656f] hover:bg-[#d1d7db]"
+                        >
+                          <Mic className="w-5 h-5" />
+                        </Button>
+                        <Button
+                          onClick={handleSendMessage}
+                          disabled={!messageText.trim()}
+                          className={cn(
+                            "h-11 w-11 p-0 rounded-full",
+                            messageText.trim()
+                              ? "bg-[#25d366] hover:bg-[#20ba5a]"
+                              : "bg-[#8696a0] hover:bg-[#667781]"
+                          )}
+                        >
+                          <Send className="w-5 h-5 text-white" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                </div>
                 </div>
               </Card>
             ) : (
@@ -2163,6 +2378,32 @@ const Atendimentos = () => {
           cdCliente={cdClienteMK}
           conversationId={selectedChat}
         />
+
+        {/* Lightbox de imagem */}
+        {lightboxImage && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setLightboxImage(null)}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-4 right-4 h-10 w-10 rounded-full bg-white/10 hover:bg-white/20 text-white"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxImage(null);
+              }}
+            >
+              <X className="w-5 h-5" />
+            </Button>
+            <img
+              src={lightboxImage}
+              alt="Visualização ampliada"
+              className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        )}
       </div>
     </Layout>
   );

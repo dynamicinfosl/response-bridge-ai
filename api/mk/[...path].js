@@ -15,10 +15,32 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const mkBase = process.env.VITE_MK_BASE_URL;
+  let mkBase = process.env.VITE_MK_BASE_URL;
 
   if (!mkBase) {
-    return res.status(500).json({ error: 'Variável VITE_MK_BASE_URL não configurada no Vercel.' });
+    // Fallback: busca mk_base_url no Supabase (system_settings)
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL;
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
+      if (supabaseUrl && supabaseKey) {
+        const settingsRes = await fetch(
+          `${supabaseUrl}/rest/v1/system_settings?select=value&key=eq.mk_base_url`,
+          { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+        );
+        if (settingsRes.ok) {
+          const rows = await settingsRes.json();
+          if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+            mkBase = rows[0].value;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[mk-proxy] Falha ao buscar mk_base_url no Supabase:', e);
+    }
+  }
+
+  if (!mkBase) {
+    return res.status(500).json({ error: 'Variável VITE_MK_BASE_URL não configurada no Vercel e mk_base_url não encontrado no Supabase.' });
   }
 
   // Remove o prefixo /api/mk do caminho para obter o path real do MK

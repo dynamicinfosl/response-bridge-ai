@@ -27,36 +27,94 @@ let cached: MKConfig | null = null;
 async function fetchMKConfigFromDB(): Promise<MKConfig | null> {
   if (typeof window === 'undefined') return null;
 
+  // Tenta primeiro via cliente Supabase (com timeout)
   try {
-    const data: any = await Promise.race([
-      supabase
+    console.log('[MK Config Debug] Iniciando busca no Supabase (system_settings)...');
+    const queryPromise = supabase
         .from('system_settings')
         .select('key, value')
-        .in('key', ['mk_base_url', 'mk_token']),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout_MK_DB')), 2000)
-      )
+        .in('key', ['mk_base_url', 'mk_token']);
+
+    const result = await Promise.race([
+      queryPromise,
+      new Promise<{ data: null; error: { message: string } }>((resolve) =>
+        setTimeout(() => resolve({ data: null, error: { message: 'Timeout: query Supabase demorou mais de ' + DB_TIMEOUT + 'ms' } }), DB_TIMEOUT)
+      ),
     ]);
 
-    if (!data || data.error || !data.data) {
-      console.warn('[MK Config] Falha ao buscar no DB. Motivo:', data?.error?.message || 'Dados vazios');
+    const { data, error } = result as any;
+
+    if (error) {
+      console.warn('[MK Config] Erro/timeout na query Supabase:', error.message || error);
+      // Fallback: fetch REST direto
+      return await fetchMKConfigREST();
+    }
+
+    const parsed = parseSettingsRows(data);
+    if (parsed) return parsed;
+  } catch (err: any) {
+    console.warn('[MK Config] Exceção ao buscar DB:', err?.message || err);
+  }
+
+  // Fallback: fetch REST direto
+  return await fetchMKConfigREST();
+}
+
+/** Fallback: busca system_settings via REST API direto (sem depender do cliente Supabase) */
+async function fetchMKConfigREST(): Promise<MKConfig | null> {
+  try {
+    const sbUrl = (import.meta.env.VITE_SUPABASE_URL as string || '').replace(/\/$/, '');
+    const sbKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string || '');
+    if (!sbUrl || !sbKey) {
+      console.warn('[MK Config REST] Sem VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY.');
       return null;
     }
 
-    const rows = data.data as { key: string; value: string }[];
-    const map = Object.fromEntries(rows.map((r) => [r.key, r.value ?? '']));
-    const baseUrl = (map.mk_base_url ?? '').trim().replace(/\/$/, '');
-    const token = (map.mk_token ?? '').trim();
+    console.log('[MK Config REST] Tentando fetch direto na REST API do Supabase...');
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), DB_TIMEOUT);
 
-    if (baseUrl || token) {
-      return {
-        baseUrl: baseUrl || envBaseUrl(),
-        token: token || envToken(),
-      };
+    const res = await fetch(
+      `${sbUrl}/rest/v1/system_settings?select=key,value&key=in.(%22mk_base_url%22,%22mk_token%22)`,
+      {
+        headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(tid);
+
+    if (!res.ok) {
+      console.warn('[MK Config REST] HTTP', res.status);
+      return null;
     }
+
+    const rows = await res.json();
+    console.log('[MK Config REST] Resposta:', Array.isArray(rows) ? `${rows.length} rows` : typeof rows);
+    return parseSettingsRows(rows);
   } catch (err: any) {
-    console.warn('[MK Config] Exceção ao buscar DB:', err?.message || err);
+    console.warn('[MK Config REST] Falha:', err?.message || err);
     return null;
+  }
+}
+
+/** Extrai baseUrl e token de um array de {key, value} */
+function parseSettingsRows(data: any): MKConfig | null {
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    console.warn('[MK Config] Nenhum dado encontrado em system_settings para as chaves MK.');
+    return null;
+  }
+
+  const rows = data as { key: string; value: string }[];
+  const map = Object.fromEntries(rows.map((r) => [r.key, r.value ?? '']));
+  const baseUrl = (map.mk_base_url ?? '').trim().replace(/\/$/, '');
+  const token = (map.mk_token ?? '').trim();
+
+  console.log(`[MK Config Debug] Dados buscados. baseUrl: ${baseUrl ? 'OK' : 'Vazio'}, token: ${token ? 'OK' : 'Vazio'}`);
+
+  const finalBaseUrl = baseUrl || envBaseUrl();
+  const finalToken = token || envToken();
+  if (finalBaseUrl && finalToken) {
+    return { baseUrl: finalBaseUrl, token: finalToken };
   }
   return null;
 }
@@ -122,17 +180,26 @@ export async function getMKConfig(): Promise<MKConfig> {
     };
   }
 
+  // Se o cache existe mas está incompleto (token ou url vazio), limpa para não travar
+  if (fromCache && (!fromCache.baseUrl?.trim() || !fromCache.token?.trim())) {
+    console.warn('[MK Config Debug] Cache incompleto detectado. Invalidando...');
+    invalidateMKCache();
+  }
+
   console.log('[MK Config Debug] Cache vazio, chamando fetchMKConfigFromDB...');
   const fromDb = await fetchMKConfigFromDB();
   console.log(`[MK Config Debug] fetchMKConfigFromDB retornou: ${fromDb ? 'Sucesso' : 'Falha'}`);
   
   if (fromDb) {
     const resolved = {
-      baseUrl: resolveBaseUrl(fromDb.baseUrl || envBaseUrl()),
-      token: fromDb.token || envToken(),
+      baseUrl: resolveBaseUrl(fromDb.baseUrl),
+      token: fromDb.token,
     };
-    if (resolved.baseUrl || resolved.token) {
-      setCache({ baseUrl: fromDb.baseUrl || envBaseUrl(), token: fromDb.token || envToken() });
+    if (resolved.baseUrl && resolved.token) {
+      setCache({ baseUrl: fromDb.baseUrl, token: fromDb.token });
+      console.log('[MK Config Debug] Config MK completa salva no cache.');
+    } else {
+      console.warn('[MK Config Debug] Config MK incompleta do DB. baseUrl:', !!resolved.baseUrl, 'token:', !!resolved.token);
     }
     return resolved;
   }
@@ -141,7 +208,12 @@ export async function getMKConfig(): Promise<MKConfig> {
   const baseUrl = resolveBaseUrl(envBaseUrl());
   const token = envToken();
   const config: MKConfig = { baseUrl, token };
-  if (baseUrl || token) setCache({ baseUrl: envBaseUrl(), token });
+  if (baseUrl && token) {
+    setCache({ baseUrl: envBaseUrl(), token });
+    console.log('[MK Config Debug] Config MK salva no cache (fallback .env).');
+  } else {
+    console.warn('[MK Config Debug] Fallback .env também incompleto. baseUrl:', !!baseUrl, 'token:', !!token);
+  }
   return config;
 }
 
