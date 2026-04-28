@@ -17,6 +17,7 @@ import Relatorios from "./pages/Relatorios";
 import ConfiguracaoIA from "./pages/ConfiguracaoIA";
 import TesteN8N from "./pages/TesteN8N";
 import Clientes from "./pages/Clientes";
+import DisparosTemplates from "./pages/DisparosTemplates";
 import Perfil from "./pages/Perfil";
 import NotFound from "./pages/NotFound";
 import RouterAccess from "./pages/RouterAccess";
@@ -96,6 +97,7 @@ const App = () => (
                 <Route path="/ordem-servico" element={<ProtectedRoute><OrdemServico /></ProtectedRoute>} />
                 <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
                 <Route path="/clientes" element={<ProtectedRoute><Clientes /></ProtectedRoute>} />
+                <Route path="/disparos-templates" element={<ProtectedRoute><DisparosTemplates /></ProtectedRoute>} />
                 <Route path="/configuracao-ia" element={<ProtectedRoute><ConfiguracaoIA /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
                 <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />

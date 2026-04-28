@@ -16,7 +16,8 @@ import {
   X,
   Bell,
   LogOut,
-  User as UserIcon
+  User as UserIcon,
+  SendHorizontal
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -88,6 +89,11 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
       title: 'Clientes MK',
       href: '/clientes',
       icon: UserCircle
+    },
+    {
+      title: 'Disparos Templates',
+      href: '/disparos-templates',
+      icon: SendHorizontal
     },
     {
       title: 'Configurações',

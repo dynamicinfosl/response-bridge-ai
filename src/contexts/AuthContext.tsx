@@ -111,13 +111,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Verificar sessão inicial
   useEffect(() => {
     console.log('🚀 Inicializando AuthContext...');
-    
+
+    let initDone = false;
+    const safetyTimeout = setTimeout(() => {
+      if (!initDone) {
+        console.warn('⏱️ AuthContext safety timeout atingido (5s). Forçando loading=false.');
+        setLoading(false);
+        initDone = true;
+      }
+    }, 5000);
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      clearTimeout(safetyTimeout);
+      if (initDone) return;
+      initDone = true;
+
       if (session) {
-        // Forçar refresh do token para garantir que o metadata (role) está atualizado
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        updateUser(refreshed?.session?.user ?? session.user ?? null);
+        try {
+          // Forçar refresh do token para garantir que o metadata (role) está atualizado
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          updateUser(refreshed?.session?.user ?? session.user ?? null);
+        } catch (err) {
+          console.warn('⚠️ Erro ao refresh session:', err);
+          updateUser(session.user ?? null);
+        }
       } else {
+        updateUser(null);
+      }
+    }).catch((err) => {
+      clearTimeout(safetyTimeout);
+      if (!initDone) {
+        initDone = true;
+        console.error('❌ Erro ao getSession:', err);
         updateUser(null);
       }
     });
@@ -129,6 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
+      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
