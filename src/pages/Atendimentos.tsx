@@ -201,7 +201,19 @@ const Atendimentos = () => {
 
   const handleSendAudio = (blob: Blob) => {
     if (!selectedChat) return;
-    const file = new File([blob], 'audio.webm', { type: blob.type || 'audio/webm' });
+    if (blob.size === 0) {
+      toast.error('Áudio vazio - tente gravar novamente');
+      return;
+    }
+    // Define extensão correta com base no tipo real do blob gerado pelo MediaRecorder
+    const blobType = (blob.type || 'audio/webm').toLowerCase();
+    let ext = 'webm';
+    let mime = 'audio/webm';
+    if (blobType.includes('mp4')) { ext = 'mp4'; mime = 'audio/mp4'; }
+    else if (blobType.includes('ogg')) { ext = 'ogg'; mime = 'audio/ogg'; }
+    else if (blobType.includes('mpeg') || blobType.includes('mp3')) { ext = 'mp3'; mime = 'audio/mpeg'; }
+    else if (blobType.includes('wav')) { ext = 'wav'; mime = 'audio/wav'; }
+    const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: mime });
     sendAttachmentMutation.mutate(
       { chatId: selectedChat, file, content: '' },
       {
