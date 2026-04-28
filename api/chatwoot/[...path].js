@@ -6,6 +6,21 @@
  * Isso resolve o erro de CORS: o browser chama o Vercel (mesma origem), e o Vercel
  * encaminha para o Chatwoot com o token de API — tudo server-side.
  */
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 export default async function handler(req, res) {
   // Suporte a preflight CORS (OPTIONS)
   if (req.method === 'OPTIONS') {
@@ -27,13 +42,13 @@ export default async function handler(req, res) {
   const targetUrl = `${chatwootBase}${originalPath}`;
 
   const headers = {
-    'Content-Type': 'application/json',
     'api_access_token': apiToken,
   };
 
-  // Para multipart/form-data (envio de anexos), repassa o content-type original
-  if (req.headers['content-type']?.includes('multipart/form-data')) {
-    headers['Content-Type'] = req.headers['content-type'];
+  // Preserva Content-Type original (obrigatório para multipart/form-data)
+  const incomingContentType = req.headers['content-type'];
+  if (incomingContentType) {
+    headers['Content-Type'] = incomingContentType;
   }
 
   try {
@@ -42,9 +57,12 @@ export default async function handler(req, res) {
       headers,
     };
 
-    // Repassa o body para métodos que o possuem
-    if (['POST', 'PATCH', 'PUT'].includes(req.method) && req.body) {
-      fetchOptions.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    // Repassa o body raw para métodos que o possuem
+    if (['POST', 'PATCH', 'PUT'].includes(req.method)) {
+      const bodyBuffer = await readBody(req);
+      if (bodyBuffer.length > 0) {
+        fetchOptions.body = bodyBuffer;
+      }
     }
 
     const response = await fetch(targetUrl, fetchOptions);
