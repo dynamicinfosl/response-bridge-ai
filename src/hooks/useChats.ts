@@ -32,7 +32,20 @@ const translateSystemMessage = (content: string): string => {
     return 'Configuração do atendimento atualizada';
   }
 
-  if (lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
+  if (lower.includes('atribuído a') || lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
+    // Tenta extrair quem recebeu a atribuição (o operador que interviu)
+    // Padrão: "Atribuído a [Operador] por [Administrador]"
+    const matchBy = content.match(/atribuído a (.*) por (.*)/i);
+    if (matchBy) return `${matchBy[1]} interviu em uma conversa`;
+
+    // Padrão: "Atribuído a [Operador]"
+    const matchSimple = content.match(/atribuído a (.*)/i);
+    if (matchSimple) return `${matchSimple[1]} interviu em uma conversa`;
+
+    // Padrão: "[Administrador] atribuiu a conversa a [Operador]"
+    const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
+    if (matchAtribuiu) return `${matchAtribuiu[2]} interviu em uma conversa`;
+
     return 'Atendimento transferido de operador';
   }
 

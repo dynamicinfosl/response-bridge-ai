@@ -390,15 +390,22 @@ export async function processosAtendimento(cd_cliente: string): Promise<MKProces
 }
 
 /** Consulta Conexão Autenticada (WSMKConsultaConexaoAutenticada) */
-export async function consultaConexaoAutenticada(cd_conexao: string | number): Promise<any> {
+export async function consultaConexaoAutenticada(cd_conexao: string | number, username?: string): Promise<any> {
   const value = String(cd_conexao);
-  const paramsToTry = [
+  const paramsToTry: any[] = [
     { cd_conexao: value },
     { cdconexao: value },
     { codconexao: value },
     { codigo: value },
     { id: value }
   ];
+
+  if (username) {
+    paramsToTry.push({ username_conexao: username });
+    paramsToTry.push({ username: username });
+    paramsToTry.push({ login: username });
+    paramsToTry.push({ conexao_login: username });
+  }
 
   let fallback: any = null;
 
@@ -408,6 +415,11 @@ export async function consultaConexaoAutenticada(cd_conexao: string | number): P
       
       // Ignora respostas que indicam erro explicitamente
       if (raw && typeof raw === 'object' && (raw.status === 'ERRO' || raw.status === 'erro' || raw.erro)) {
+        continue;
+      }
+      
+      // Se retornou um objeto vazio ou sem dados relevantes, ignora e tenta o próximo
+      if (raw && typeof raw === 'object' && raw.status === 'OK' && Object.keys(raw.conexao || {}).length === 0 && !containsIPv4(raw)) {
         continue;
       }
       

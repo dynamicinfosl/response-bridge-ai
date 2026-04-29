@@ -131,6 +131,7 @@ export default function RouterAccess() {
   const rawIp = searchParams.get('ip');
   const cleanedRawIp = rawIp ? extractIpFromString(rawIp) || rawIp : null;
   const cdConexao = searchParams.get('cd_conexao');
+  const username = searchParams.get('username');
   
   const [ip, setIp] = useState<string | null>(cleanedRawIp);
   const [currentPortIndex, setCurrentPortIndex] = useState(0);
@@ -139,10 +140,11 @@ export default function RouterAccess() {
   const hasStarted = useRef(false);
 
   useEffect(() => {
-    const fetchIp = async () => {
-      if (!cdConexao) return;
+    async function fetchIp() {
+      if (!cdConexao || ip) return;
+
       try {
-        const res = await consultaConexaoAutenticada(cdConexao);
+        const res = await consultaConexaoAutenticada(cdConexao, username || undefined);
         console.log('[RouterAccess] Resposta da API MK:', JSON.stringify(res));
         const foundIp = extractRouterIp(res);
         console.log('[RouterAccess] IP extraído:', foundIp);

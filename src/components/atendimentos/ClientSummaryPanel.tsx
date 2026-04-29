@@ -131,7 +131,10 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
     }
     
     // Abre a aba imediatamente para o navegador não bloquear o popup
-    const params = new URLSearchParams({ cd_conexao: String(cd_conexao) });
+    const params = new URLSearchParams({ 
+      cd_conexao: String(cd_conexao),
+      username: conn.username_conexao || ''
+    });
     window.open(`/router-access?${params.toString()}`, '_blank');
     toast.success("Abrindo painel do roteador em nova guia...");
   };
