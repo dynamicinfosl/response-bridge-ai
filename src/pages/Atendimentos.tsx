@@ -325,29 +325,49 @@ const Atendimentos = () => {
   // Controle de visualização de mensagens para chats fechados
   const [viewMessagesForClosedChat, setViewMessagesForClosedChat] = useState<Record<string, boolean>>({});
 
-  // Constantes de Setores (para visibilidade)
-  const SECTOR_LABELS = [
-    'comercial', 'financeiro', 'tecnico', 'tecnica',
-    's-comercial', 's-financeiro', 's-tecnico', 's-tecnica'
-  ];
-
-  // Função para normalizar texto (remover acentos, minúsculas e prefixo s-)
+  // Função para normalizar texto (remover acentos, minúsculas)
   const normalizeText = (text: string) => {
     if (!text) return '';
-    let normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
-    // Se começar com "s-", removemos para facilitar a comparação se necessário, 
-    // mas mantemos o suporte aos slugs completos no SECTOR_LABELS
-    return normalized;
+    return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
   };
 
-  // Função para verificar se um chat está em Triagem
+  // Extrai o setor canônico de qualquer label (robusto para variações como "Técnico", "s-tecnico", "Setor Técnico", etc)
+  // Triagem NÃO é setor — é um estado de conversas ainda não direcionadas
+  const getSectorFromLabel = (label: string): string | null => {
+    const n = normalizeText(label);
+    if (n.includes('tecnic')) return 'tecnico';
+    if (n.includes('comercial')) return 'comercial';
+    if (n.includes('financeiro')) return 'financeiro';
+    return null;
+  };
+
+  // Função para verificar se um chat está em Triagem (sem setor atribuído)
   const isTriagemChat = (labels: string[]) => {
     if (!labels || labels.length === 0) return true;
-    const normalizedLabels = labels.map(l => normalizeText(l));
-    if (normalizedLabels.includes('triagem')) return true;
-    // Se não tem nenhuma etiqueta de setor, está em triagem
-    return !normalizedLabels.some(l => SECTOR_LABELS.includes(l));
+    // Se nenhum label mapeia para um setor reconhecido, está em triagem
+    const sectors = labels.map(l => getSectorFromLabel(l)).filter(Boolean);
+    return sectors.length === 0;
   };
+
+  // Helpers de permissão por perfil
+  const isAdminOrMaster = user?.role === 'master' || user?.role === 'admin';
+  const isEncarregado = user?.role === 'encarregado';
+  const userSectorKey = (() => {
+    const area = normalizeText(user?.area || '');
+    if (area === 'tecnica' || area === 'tecnico') return 'tecnico';
+    if (area === 'comercial') return 'comercial';
+    if (area === 'financeiro') return 'financeiro';
+    return '';
+  })();
+  const userSectorName = (() => {
+    if (userSectorKey === 'tecnico') return 'Técnico';
+    if (userSectorKey === 'comercial') return 'Comercial';
+    if (userSectorKey === 'financeiro') return 'Financeiro';
+    return '';
+  })();
+
+  // [DEBUG] Diagnóstico de permissão do usuário logado (visível no console F12)
+  if (user) console.debug('[Atendimentos] user:', { role: user.role, area: user.area, userSectorKey, chatwoot_id: user.chatwoot_id });
 
   // Marcar como lido na API ao abrir o chat e fechar painel MK
   useEffect(() => {
@@ -378,6 +398,22 @@ const Atendimentos = () => {
       return d2 === parseInt(digits[10]);
     };
 
+    // Valida CNPJ real (checksum oficial)
+    const isValidCNPJ = (digits: string): boolean => {
+      if (digits.length !== 14) return false;
+      if (/(\d)\1{13}/.test(digits)) return false;
+      const calc = (len: number): number => {
+        const weights = len === 12
+          ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+          : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+        let sum = 0;
+        for (let i = 0; i < len; i++) sum += parseInt(digits[i]) * weights[i];
+        const mod = sum % 11;
+        return mod < 2 ? 0 : 11 - mod;
+      };
+      return calc(12) === parseInt(digits[12]) && calc(13) === parseInt(digits[13]);
+    };
+
     // Detecta se 11 dígitos seguem padrão de celular BR (DDD>=11 + terceiro dígito 9)
     const looksLikePhone = (digits: string): boolean => {
       if (digits.length !== 11) return false;
@@ -391,6 +427,12 @@ const Atendimentos = () => {
     const cpfComContexto = /(?:cpf|documento|doc)\s*[:=]?\s*(\d{11})(?!\d)/gi;
     // 3) 11 dígitos puros isolados — aceita se NÃO parecer telefone
     const digitos11 = /(?<!\d)(\d{11})(?!\d)/g;
+    // 4) CNPJ FORMATADO (XX.XXX.XXX/XXXX-XX) — alta confiança
+    const cnpjFormatado = /(?<!\d)(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})(?!\d)/g;
+    // 5) CNPJ após palavra-chave — 14 dígitos puros com contexto
+    const cnpjComContexto = /(?:cnpj|documento|doc)\s*[:=]?\s*(\d{14})(?!\d)/gi;
+    // 6) 14 dígitos puros isolados
+    const digitos14 = /(?<!\d)(\d{14})(?!\d)/g;
 
     const contentPool = [...messagesData].reverse().slice(0, 50);
     const candidates: string[] = [];
@@ -436,12 +478,49 @@ const Atendimentos = () => {
       }
     }
 
+    // Quarto: CNPJs formatados (alta confiança)
+    for (const msg of contentPool) {
+      const content = msg.content;
+      if (!content) continue;
+      for (const m of content.matchAll(cnpjFormatado)) {
+        const digits = m[1].replace(/\D/g, '');
+        if (isValidCNPJ(digits) && !candidates.includes(digits)) {
+          candidates.push(digits);
+        }
+      }
+    }
+
+    // Quinto: CNPJs com contexto textual
+    for (const msg of contentPool) {
+      const content = msg.content;
+      if (!content) continue;
+      for (const m of content.matchAll(cnpjComContexto)) {
+        const digits = m[1];
+        if (isValidCNPJ(digits) && !candidates.includes(digits)) {
+          candidates.push(digits);
+        }
+      }
+    }
+
+    // Sexto: 14 dígitos puros isolados
+    for (const msg of contentPool) {
+      const content = msg.content;
+      if (!content) continue;
+      for (const m of content.matchAll(digitos14)) {
+        const digits = m[1];
+        if (isValidCNPJ(digits) && !candidates.includes(digits)) {
+          console.log('[Auto-Doc] 14 dígitos detectados (CNPJ válido):', digits);
+          candidates.push(digits);
+        }
+      }
+    }
+
     if (candidates.length === 0) {
-      console.log('[Auto-CPF] Nenhum CPF válido encontrado nas últimas 50 mensagens.');
+      console.log('[Auto-Doc] Nenhum CPF/CNPJ válido encontrado nas últimas 50 mensagens.');
       return;
     }
 
-    console.log('[Auto-CPF] CPFs candidatos:', candidates);
+    console.log('[Auto-Doc] Documentos candidatos (CPF/CNPJ):', candidates);
 
     let cancelled = false;
     (async () => {
@@ -860,19 +939,18 @@ const Atendimentos = () => {
   };
 
   const getSectorInfo = (labels: string[]) => {
-    const normalizedLabels = (labels || []).map(l => normalizeText(l));
+    const sectors = (labels || []).map(l => getSectorFromLabel(l)).filter(Boolean) as string[];
     
-    if (normalizedLabels.includes('comercial') || normalizedLabels.includes('s-comercial')) {
+    if (sectors.includes('comercial')) {
       return { label: 'Comercial', className: 'bg-blue-50 text-blue-600 border-blue-200' };
     }
-    if (normalizedLabels.includes('financeiro') || normalizedLabels.includes('s-financeiro')) {
+    if (sectors.includes('financeiro')) {
       return { label: 'Financeiro', className: 'bg-green-50 text-green-600 border-green-200' };
     }
-    if (normalizedLabels.includes('tecnico') || normalizedLabels.includes('tecnica') || 
-        normalizedLabels.includes('s-tecnico') || normalizedLabels.includes('s-tecnica')) {
+    if (sectors.includes('tecnico')) {
       return { label: 'Técnico', className: 'bg-orange-50 text-orange-600 border-orange-200' };
     }
-    if (normalizedLabels.includes('triagem') || isTriagemChat(labels)) {
+    if (isTriagemChat(labels)) {
       return { label: 'Triagem', className: 'bg-slate-50 text-slate-600 border-slate-200' };
     }
     return null;
@@ -1057,31 +1135,18 @@ const Atendimentos = () => {
     // 1. REGRA DE VISIBILIDADE (Privacidade de Setor)
     const chatLabels = chat.labels || [];
     const isTriagem = isTriagemChat(chatLabels);
-    const isMasterOrAdmin = user?.role === 'master' || user?.role === 'admin';
+    const chatSectors = chatLabels.map(l => getSectorFromLabel(l)).filter(Boolean) as string[];
 
     // Se não for admin/master, aplicamos restrição de setor/responsável
-    if (!isMasterOrAdmin) {
-      // 1.1 Sempre vê o que está atribuído diretamente a ele (independente de etiqueta)
+    if (!isAdminOrMaster) {
+      // 1.1 Sempre vê o que está atribuído diretamente a ele
       const isAssignedToMe = chat.assigneeId && user?.chatwoot_id && String(chat.assigneeId) === String(user.chatwoot_id);
       
       if (!isTriagem && !isAssignedToMe) {
-        // Se já está classificado em algum setor e não é o responsável direto, 
-        // só pode ver se a classificação incluir o seu próprio setor.
-        const normalizedLabels = chatLabels.map(l => normalizeText(l));
-        const chatSectors = normalizedLabels.filter(l => SECTOR_LABELS.includes(l));
-        
-        let hasAccess = false;
-        const normalizedUserArea = normalizeText(user?.area || '');
-
-        if (normalizedUserArea === 'tecnica' || normalizedUserArea === 'tecnico') {
-          // Robustez para setor técnico (suporta técnica, técnico, s-tecnico, etc)
-          hasAccess = chatSectors.some(s => s.includes('tecnic') || s.includes('s-tecnic'));
-        } else if (normalizedUserArea) {
-          // Outros setores (comercial, financeiro)
-          hasAccess = chatSectors.some(s => s.includes(normalizedUserArea));
+        // Só pode ver se o setor canônico do chat bater com o setor do usuário
+        if (!userSectorKey || !chatSectors.includes(userSectorKey)) {
+          return false;
         }
-        
-        if (!hasAccess) return false;
       }
     }
 
@@ -1103,21 +1168,14 @@ const Atendimentos = () => {
         rawPhone.includes(query);
     }
 
-    // 4. FILTRO DE SETOR (Seleção na UI)
+    // 4. FILTRO DE SETOR (Seleção na UI — só admin/master e encarregado)
     if (sectorFilter !== 'all') {
       if (sectorFilter === 'triagem') {
         if (!isTriagem) return false;
       } else {
-        // Filtro específico (Comercial, Financeiro, Técnico)
-        const querySector = normalizeText(sectorFilter);
-        const normalizedLabels = chatLabels.map(l => normalizeText(l));
-        
-        if (querySector === 'tecnico' || querySector === 'tecnica') {
-          if (!normalizedLabels.includes('tecnico') && !normalizedLabels.includes('tecnica') &&
-              !normalizedLabels.includes('s-tecnico') && !normalizedLabels.includes('s-tecnica')) return false;
-        } else {
-          if (!normalizedLabels.includes(querySector) && !normalizedLabels.includes(`s-${querySector}`)) return false;
-        }
+        const filterKey = normalizeText(sectorFilter);
+        const canonicalKey = filterKey === 'tecnica' ? 'tecnico' : filterKey;
+        if (!chatSectors.includes(canonicalKey)) return false;
       }
     }
 
@@ -1227,11 +1285,26 @@ const Atendimentos = () => {
                     onChange={(e) => setSectorFilter(e.target.value)}
                     className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
-                    <option value="all">Setores: Todos</option>
-                    <option value="triagem">Triagem</option>
-                    <option value="comercial">Comercial</option>
-                    <option value="financeiro">Financeiro</option>
-                    <option value="tecnico">Técnico</option>
+                    {isAdminOrMaster ? (
+                      <>
+                        <option value="all">Setores: Todos</option>
+                        <option value="triagem">Triagem</option>
+                        <option value="comercial">Comercial</option>
+                        <option value="financeiro">Financeiro</option>
+                        <option value="tecnico">Técnico</option>
+                      </>
+                    ) : userSectorKey ? (
+                      <>
+                        <option value="all">Todos ({userSectorName} + Triagem)</option>
+                        <option value={userSectorKey}>Só {userSectorName}</option>
+                        <option value="triagem">Só Triagem</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="all">Todos (sem setor)</option>
+                        <option value="triagem">Só Triagem</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -2140,7 +2213,6 @@ const Atendimentos = () => {
                                   );
                                 })()}
 
-                                {/* Horário e status dentro do balão */}
                                 <div className={cn(
                                   "flex items-center gap-1 mt-1",
                                   isClient ? "justify-start" : "justify-end"

@@ -149,31 +149,30 @@ export default function Colaboradores() {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const url = `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at,supervisor:supervisor_id(full_name)&order=created_at.desc`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'apikey': ANON_KEY,
-          'Authorization': `Bearer ${ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/users?select=id,email,full_name,phone,role,area,supervisor_id,avatar_url,chatwoot_id,password_plain,created_at&order=created_at.desc`,
+        {
+          method: 'GET',
+          headers: {
+            apikey: ANON_KEY,
+            Authorization: `Bearer ${ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('🔴 [Colaboradores] Erro:', response.status, errorText);
         toast({ title: 'Erro', description: `HTTP ${response.status}`, variant: 'destructive' });
         return;
       }
 
-      const rows: any[] = await response.json();
+      const rows = await response.json();
 
-      // Processar rows para incluir supervisor_name
-      const processedRows: Colaborador[] = rows.map(r => ({
+      // Mapear supervisor_name localmente (evita auto-join ambíguo no PostgREST)
+      const byId = new Map<string, any>((rows || []).map((r: any) => [r.id, r]));
+      const processedRows: Colaborador[] = (rows || []).map((r: any) => ({
         ...r,
-        supervisor_name: r.supervisor?.full_name || undefined
+        supervisor_name: r.supervisor_id ? byId.get(r.supervisor_id)?.full_name || undefined : undefined,
       }));
 
       // Proteção para não mostrar masters para quem não é master
@@ -183,15 +182,16 @@ export default function Colaboradores() {
 
       setColaboradores(finalRows);
     } catch (err: any) {
-      console.error('🔴 [Colaboradores] Exceção:', err);
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUser]);
 
-  // Disparar no mount
-  useEffect(() => { load(); }, [load]);
+  // Disparar quando currentUser estiver disponível
+  useEffect(() => {
+    load();
+  }, [load]);
 
   // ── Filter ──────────────────────────────────────────────────────────────────
 

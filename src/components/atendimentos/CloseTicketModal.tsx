@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useCloseChat } from '@/hooks/useChats';
-import { chatwootAPI } from '@/lib/chatwoot';
+import { supabase } from '@/lib/supabase';
 
 interface CloseTicketModalProps {
   isOpen: boolean;
@@ -57,36 +57,9 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
 
     setIsClosing(true);
     try {
-      // 1. Enviar o resumo como uma nota privada no Chatwoot
-      await chatwootAPI.sendMessage(Number(chatId), `Resumo Manual:\n${summary}`, true);
+      const summaryValue = summary;
 
-      // 2. Mudar status para resolvido no Chatwoot
       await closeChatMutation.mutateAsync({ id: chatId });
-
-      // 3. Persistir dados do encerramento no Supabase (tabela atendimentos_encerrados)
-      const { error: dbError } = await supabase.from('atendimentos_encerrados').insert({
-        id_conversa_chatwoot: chatId,
-        nome: clientName,
-        mini_resumo: summary,
-        status: 'resolved',
-        resolvido_por: 'manual_ui',
-        encerrado_em: new Date().toISOString(),
-        quantidade_mensagens: ticketData.totalMessages,
-        motivo_contato: 'Encerramento manual via interface'
-      });
-
-      if (dbError) {
-        console.error('Erro ao salvar encerramento no banco:', dbError);
-        // Não travamos o fluxo aqui pois o Chatwoot já foi atualizado, mas avisamos no console
-      }
-
-      // 4. Registrar no Log de Auditoria
-      await logAuditAction('chat_close_manual', {
-        clientName,
-        summary,
-        totalMessages: ticketData.totalMessages,
-        duration: minutes
-      }, 'chat', chatId);
 
       toast({
         title: "Atendimento encerrado!",
@@ -94,7 +67,19 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
       });
 
       setSummary('');
+      setIsClosing(false);
       onClose();
+
+      void supabase.from('atendimentos_encerrados').insert({
+        id_conversa_chatwoot: chatId,
+        nome: clientName,
+        mini_resumo: summaryValue,
+        status: 'resolved',
+        resolvido_por: 'manual_ui',
+        encerrado_em: new Date().toISOString(),
+        quantidade_mensagens: ticketData.totalMessages,
+        motivo_contato: 'Encerramento manual via interface'
+      });
     } catch (error) {
       console.error('Erro ao fechar atendimento:', error);
       toast({

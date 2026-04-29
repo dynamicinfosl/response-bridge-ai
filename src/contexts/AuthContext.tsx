@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
 
   // Função para atualizar dados do usuário (busca da tabela users)
-  const updateUser = async (authUser: any) => {
+  const updateUser = async (authUser: any, accessToken?: string) => {
     console.log('👤 Atualizando usuário...', { 
       hasAuthUser: !!authUser, 
       userId: authUser?.id,
@@ -36,126 +36,97 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Fallback básico primeiro (para não travar)
-    const fallbackUser: User = {
-      id: authUser.id,
-      email: authUser.email || '',
-      name: authUser.user_metadata?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuário',
-      role: (authUser.user_metadata?.role as User['role']) || 'user',
-      avatar_url: authUser.user_metadata?.avatar_url || null,
-    };
-
-    // Definir usuário básico primeiro para não travar a UI
-    setUser(fallbackUser);
+    // Fallback: usa cache do localStorage se disponível (evita tela sem área quando query é lenta)
+    setUser(prev => {
+      if (prev && prev.id === authUser.id) return prev;
+      try {
+        const cached = localStorage.getItem(`userProfile_${authUser.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached) as User;
+          if (parsed.id === authUser.id) return parsed;
+        }
+      } catch (_) {}
+      return {
+        id: authUser.id,
+        email: authUser.email || '',
+        name: authUser.user_metadata?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuário',
+        role: (authUser.user_metadata?.role as User['role']) || 'user',
+        avatar_url: authUser.user_metadata?.avatar_url || null,
+      };
+    });
     setLoading(false);
 
-    // Depois tentar buscar/criar dados completos da tabela (sem bloquear)
+    // Buscar dados completos via REST direta (evita travamento do SDK)
     try {
-      // Tentar buscar primeiro
-      let { data: userProfile, error } = await supabase
-        .from('users')
-        .select('id, email, full_name, role, area, supervisor_id, avatar_url, chatwoot_id')
-        .eq('id', authUser.id)
-        .single();
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const token = accessToken || supabaseKey;
 
-      // Se não encontrou, criar o registro
-      if (error && error.code === 'PGRST116') {
-        console.log('📝 Usuário não encontrado na tabela, criando registro...');
-        const { data: newUser, error: insertError } = await supabase
-          .from('users')
-          .insert({
-            id: authUser.id,
-            email: authUser.email || '',
-            full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'Usuário',
-            role: authUser.user_metadata?.role || 'user',
-          })
-          .select()
-          .single();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        if (insertError) {
-          console.warn('⚠️ Erro ao criar perfil do usuário:', insertError.message);
-          return;
+      const resp = await fetch(
+        `${supabaseUrl}/rest/v1/users?select=id,email,full_name,role,area,supervisor_id,avatar_url,chatwoot_id&id=eq.${authUser.id}&limit=1`,
+        {
+          signal: controller.signal,
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
         }
+      );
+      clearTimeout(timeoutId);
 
-        userProfile = newUser;
-        error = null;
-      }
-
-      if (error) {
-        console.warn('⚠️ Erro ao buscar perfil do usuário (usando dados básicos):', error.message);
-        return;
-      }
-
-      if (userProfile) {
-        // Atualizar com dados completos da tabela
-        const userData: User = {
-          id: userProfile.id,
-          email: userProfile.email || authUser.email || '',
-          name: userProfile.full_name || authUser.user_metadata?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuário',
-          role: (userProfile.role as User['role']) || 'user',
-          area: userProfile.area as User['area'],
-          supervisor_id: userProfile.supervisor_id || undefined,
-          avatar_url: userProfile.avatar_url || authUser.user_metadata?.avatar_url || null,
-          chatwoot_id: userProfile.chatwoot_id,
-        };
-
-        console.log('✅ Dados do usuário (tabela users):', userData);
-        setUser(userData);
+      if (resp.ok) {
+        const rows = await resp.json();
+        const userProfile = rows[0];
+        if (userProfile) {
+          const userData: User = {
+            id: userProfile.id,
+            email: userProfile.email || authUser.email || '',
+            name: userProfile.full_name || authUser.user_metadata?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuário',
+            role: (userProfile.role as User['role']) || 'user',
+            area: userProfile.area as User['area'],
+            supervisor_id: userProfile.supervisor_id || undefined,
+            avatar_url: userProfile.avatar_url || authUser.user_metadata?.avatar_url || null,
+            chatwoot_id: userProfile.chatwoot_id,
+          };
+          console.log('✅ Dados do usuário (REST):', userData);
+          try { localStorage.setItem(`userProfile_${userData.id}`, JSON.stringify(userData)); } catch (_) {}
+          setUser(userData);
+        }
+      } else {
+        console.warn('⚠️ REST users falhou:', resp.status);
       }
     } catch (error) {
-      console.warn('⚠️ Erro ao buscar dados completos (usando dados básicos):', error);
-      // Já temos o fallback definido, então não precisa fazer nada
+      console.warn('⚠️ Erro ao buscar perfil (usando cache/fallback):', error);
     }
   };
 
-  // Verificar sessão inicial
+  // Verificar sessão inicial via onAuthStateChange (não depende de locks)
   useEffect(() => {
-    console.log('🚀 Inicializando AuthContext...');
+    let handled = false;
 
-    let initDone = false;
-    const safetyTimeout = setTimeout(() => {
-      if (!initDone) {
-        console.warn('⏱️ AuthContext safety timeout atingido (5s). Forçando loading=false.');
-        setLoading(false);
-        initDone = true;
-      }
-    }, 5000);
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      clearTimeout(safetyTimeout);
-      if (initDone) return;
-      initDone = true;
-
-      if (session) {
-        try {
-          // Forçar refresh do token para garantir que o metadata (role) está atualizado
-          const { data: refreshed } = await supabase.auth.refreshSession();
-          updateUser(refreshed?.session?.user ?? session.user ?? null);
-        } catch (err) {
-          console.warn('⚠️ Erro ao refresh session:', err);
-          updateUser(session.user ?? null);
-        }
-      } else {
-        updateUser(null);
-      }
-    }).catch((err) => {
-      clearTimeout(safetyTimeout);
-      if (!initDone) {
-        initDone = true;
-        console.error('❌ Erro ao getSession:', err);
-        updateUser(null);
-      }
-    });
-
-    // Escutar mudanças de autenticação
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('🔄 Auth mudou:', event, { hasUser: !!session?.user });
-      await updateUser(session?.user ?? null);
+      handled = true;
+      if (session?.user) {
+        await updateUser(session.user, session.access_token);
+      } else {
+        await updateUser(null);
+      }
     });
+
+    // Fallback: se onAuthStateChange não disparar em 3s, destravar a UI
+    const fallbackTimer = setTimeout(() => {
+      if (!handled) {
+        setLoading(false);
+      }
+    }, 3000);
 
     return () => {
-      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
+      clearTimeout(fallbackTimer);
     };
   }, []);
 
@@ -183,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data?.user) {
         console.log('✅ Login bem-sucedido, atualizando usuário...');
         // Atualizar usuário (não esperar, pois já define loading como false)
-        updateUser(data.user);
+        updateUser(data.user, data.session?.access_token);
         console.log('🚀 Redirecionando para /dashboard');
         // Pequeno delay para garantir que o estado foi atualizado
         setTimeout(() => {
@@ -224,6 +195,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try {
+      if (user?.id) {
+        try { localStorage.removeItem(`userProfile_${user.id}`); } catch (_) {}
+      }
       setUser(null);
       await supabase.auth.signOut();
     } catch (error) {
