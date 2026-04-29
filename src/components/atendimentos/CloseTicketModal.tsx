@@ -27,6 +27,7 @@ interface CloseTicketModalProps {
   onClose: () => void;
   clientName: string;
   chatId: string;
+  labels?: string[];
   ticketData: {
     startTime: string;
     totalMessages: number;
@@ -36,7 +37,7 @@ interface CloseTicketModalProps {
   };
 }
 
-export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketData }: CloseTicketModalProps) => {
+export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, labels, ticketData }: CloseTicketModalProps) => {
   const [summary, setSummary] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -59,7 +60,7 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
     try {
       const summaryValue = summary;
 
-      await closeChatMutation.mutateAsync({ id: chatId });
+      await closeChatMutation.mutateAsync({ id: chatId, labels });
 
       toast({
         title: "Atendimento encerrado!",
@@ -169,6 +170,7 @@ export const CloseTicketModal = ({ isOpen, onClose, clientName, chatId, ticketDa
               <li>• Cliente receberá pesquisa de satisfação por WhatsApp</li>
               <li>• Histórico será arquivado e indexado para consultas futuras</li>
               <li>• Webhook será disparado para sistemas externos</li>
+              <li>• Etiquetas de setor e estado serão removidas (cliente volta à triagem)</li>
             </ul>
           </div>
         </div>

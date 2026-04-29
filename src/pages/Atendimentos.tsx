@@ -35,7 +35,8 @@ import {
   Mic,
   Video,
   Paperclip,
-  Image as ImageIcon
+  Image as ImageIcon,
+  UserRound
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -1956,22 +1957,21 @@ const Atendimentos = () => {
                         const prevMessage = index > 0 ? messages[index - 1] : null;
                         const prevDisplaySenderName = prevMessage ? (messageSenderOverrides[prevMessage.id] || (prevMessage as any).senderName) : undefined;
 
+                        // É humano quando tem senderName (agente real, não IA)
+                        const isHuman = isAgent && !!displaySenderName;
+
                         // Verifica se é o mesmo remetente da mensagem anterior (para agrupar)
+                        // Para agentes, também agrupa pelo nome (diferente operador = não agrupa)
                         const isSameSender = prevMessage && (
-                          (prevMessage.sender === message.sender) ||
                           ((prevMessage.sender === 'user' || prevMessage.sender === 'client') &&
                             (message.sender === 'user' || message.sender === 'client')) ||
                           ((prevMessage.sender === 'agent' || prevMessage.sender === 'ai') &&
-                            (message.sender === 'agent' || message.sender === 'ai'))
+                            (message.sender === 'agent' || message.sender === 'ai') &&
+                            prevDisplaySenderName === displaySenderName)
                         );
 
-                        // Mostrar nome do operador quando muda de remetente ou muda de agente
-                        const showAgentName = isAgent && displaySenderName && (
-                          !prevMessage ||
-                          prevMessage.sender === 'user' || prevMessage.sender === 'client' ||
-                          prevMessage.sender === 'activity' ||
-                          prevDisplaySenderName !== displaySenderName
-                        );
+                        // Mostrar nome do operador na primeira mensagem do bloco
+                        const showAgentName = isAgent && displaySenderName && !isSameSender;
 
                         // Formata horário (HH:MM) - corrige timezone
                         const getMessageTime = () => {
@@ -2043,10 +2043,12 @@ const Atendimentos = () => {
                             {!isSameSender && (
                               <div className={cn(
                                 "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1",
-                                isClient ? "bg-[#dfe5e7]" : "bg-[#34b7f1]"
+                                isClient ? "bg-[#dfe5e7]" : isHuman ? "bg-[#25d366]" : "bg-[#34b7f1]"
                               )}>
                                 {isClient ? (
                                   <User className="w-4 h-4 text-[#54656f]" />
+                                ) : isHuman ? (
+                                  <UserRound className="w-4 h-4 text-white" />
                                 ) : (
                                   <Bot className="w-4 h-4 text-white" />
                                 )}
@@ -2422,6 +2424,7 @@ const Atendimentos = () => {
               onClose={() => setShowCloseModal(false)}
               clientName={selectedChatData.client || selectedChatData.phone || 'Cliente'}
               chatId={selectedChatData.id}
+              labels={selectedChatData.labels}
               ticketData={{
                 startTime: formatTimeAgo(selectedChatData.createdAt || ''),
                 totalMessages: messages.length,

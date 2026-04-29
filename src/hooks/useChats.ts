@@ -295,7 +295,26 @@ export function useMessages(chatId: string | null) {
     queryKey: ['messages', chatId],
     queryFn: async () => {
       if (!chatId) return [];
-      const response = await chatwootAPI.getMessages(Number(chatId));
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      const [response, usersResp] = await Promise.all([
+        chatwootAPI.getMessages(Number(chatId)),
+        fetch(`${supabaseUrl}/rest/v1/users?select=full_name,chatwoot_id&chatwoot_id=not.is.null`, {
+          headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }
+        }).then(r => r.json().catch(() => [])),
+      ]);
+
+      // Set de chatwoot_ids de humanos para diferenciar do bot
+      const humanChatwootIds = new Set<string>(
+        (usersResp || []).filter((u: any) => u?.chatwoot_id).map((u: any) => String(u.chatwoot_id))
+      );
+      // Mapa chatwoot_id -> full_name (nome real do Supabase)
+      const humanNameById = new Map<string, string>(
+        (usersResp || []).filter((u: any) => u?.chatwoot_id && u?.full_name).map((u: any) => [String(u.chatwoot_id), u.full_name])
+      );
+
       // Chatwoot retorna { payload: [...] } ou { data: { payload: [...] } } via proxy
       const messages = (response as any).data?.payload || (response as any).payload || (Array.isArray(response) ? response : []);
 
@@ -304,7 +323,19 @@ export function useMessages(chatId: string | null) {
         return [];
       }
 
-      return messages.map(mapChatwootToMessage).sort((a, b) =>
+      return messages.map((msg: any) => {
+        const mapped = mapChatwootToMessage(msg);
+        // Sobrescreve senderName: só mostra se o sender.id for um humano real do Supabase
+        if (msg.message_type === 1 && msg.sender?.id) {
+          const sid = String(msg.sender.id);
+          if (humanChatwootIds.has(sid)) {
+            mapped.senderName = humanNameById.get(sid) || msg.sender.name;
+          } else {
+            mapped.senderName = undefined; // bot — não exibir nome
+          }
+        }
+        return mapped;
+      }).sort((a: any, b: any) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
     },
@@ -466,8 +497,22 @@ export function useCloseChat() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id }: { id: string; reason?: string }) =>
-      chatwootAPI.updateStatus(Number(id), 'resolved'),
+    mutationFn: async ({ id, labels }: { id: string; reason?: string; labels?: string[] }) => {
+      // 1. Atualizar status para resolved
+      await chatwootAPI.updateStatus(Number(id), 'resolved');
+
+      // 2. Remover etiquetas de estado e setor para "resetar" o cliente
+      const labelsToRemove = ['agente-off', 'precisa_atendimento', 'comercial', 'financeiro', 'tecnico'];
+      const filteredLabels = (labels || []).filter(l => {
+        const normalized = l.toLowerCase();
+        return !labelsToRemove.some(toRemove => normalized.includes(toRemove));
+      });
+
+      // Se houver labels diferentes das removidas, mantém-as. Senão, envia array vazio (remove todas)
+      await chatwootAPI.addLabel(Number(id), filteredLabels);
+
+      return { id };
+    },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
       logAuditAction('chat_close_manual', { chatId: variables.id, reason: variables.reason }, 'chat', variables.id);
