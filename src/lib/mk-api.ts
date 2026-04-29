@@ -10,6 +10,15 @@
 import { getMKConfig, invalidateMKCache } from './mk-config';
 
 const MK_FETCH_TIMEOUT = 8000; // 8s
+const IPV4_REGEX = /\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?:\/\d+)?\b/;
+
+function containsIPv4(value: unknown, depth = 0): boolean {
+  if (!value || depth > 6) return false;
+  if (typeof value === 'string' || typeof value === 'number') return IPV4_REGEX.test(String(value));
+  if (Array.isArray(value)) return value.some((item) => containsIPv4(item, depth + 1));
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).some((item) => containsIPv4(item, depth + 1));
+  return false;
+}
 
 async function mkFetch<T>(
   path: string,
@@ -382,10 +391,32 @@ export async function processosAtendimento(cd_cliente: string): Promise<MKProces
 
 /** Consulta Conexão Autenticada (WSMKConsultaConexaoAutenticada) */
 export async function consultaConexaoAutenticada(cd_conexao: string | number): Promise<any> {
-  try {
-    const raw = await mkFetch<any>('/mk/WSMKConsultaConexaoAutenticada.rule', { cd_conexao: String(cd_conexao) });
-    return raw;
-  } catch {
-    return null;
+  const value = String(cd_conexao);
+  const paramsToTry = [
+    { cd_conexao: value },
+    { cdconexao: value },
+    { codconexao: value },
+    { codigo: value },
+    { id: value }
+  ];
+
+  let fallback: any = null;
+
+  for (const params of paramsToTry) {
+    try {
+      const raw = await mkFetch<any>('/mk/WSMKConsultaConexaoAutenticada.rule', params);
+      
+      // Ignora respostas que indicam erro explicitamente
+      if (raw && typeof raw === 'object' && (raw.status === 'ERRO' || raw.status === 'erro' || raw.erro)) {
+        continue;
+      }
+      
+      if (containsIPv4(raw)) return raw;
+      fallback = fallback ?? raw;
+    } catch (err) {
+      console.warn('[MK Consulta Conexão Autenticada] Falha com parâmetros:', Object.keys(params).join(','), err);
+    }
   }
+
+  return fallback;
 }

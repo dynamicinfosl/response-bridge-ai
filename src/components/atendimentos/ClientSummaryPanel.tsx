@@ -131,7 +131,8 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
     }
     
     // Abre a aba imediatamente para o navegador não bloquear o popup
-    window.open(`/router-access?cd_conexao=${cd_conexao}`, '_blank');
+    const params = new URLSearchParams({ cd_conexao: String(cd_conexao) });
+    window.open(`/router-access?${params.toString()}`, '_blank');
     toast.success("Abrindo painel do roteador em nova guia...");
   };
 
@@ -582,7 +583,7 @@ export function ClientSummaryPanel({ open, onClose, cliente, cdCliente, conversa
                                       <div className="flex flex-col gap-1 mt-0.5">
                                         <p className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3 text-red-400" /> {formatDate(fim)}</p>
                                         {diffDays != null && (
-                                          <Badge variant={diffDays < 0 ? "destructive" : diffDays <= 60 ? "warning" : "outline"} className={cn(
+                                          <Badge variant={diffDays < 0 ? "destructive" : "outline"} className={cn(
                                             "w-fit text-[9px] h-5 px-1.5 font-bold",
                                             diffDays >= 0 && diffDays <= 60 ? "bg-amber-100 text-amber-800 border-amber-300" : ""
                                           )}>

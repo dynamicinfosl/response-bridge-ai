@@ -351,8 +351,9 @@ const Atendimentos = () => {
 
   const { user } = useAuth();
   
-  // Controle de visualização de mensagens para chats fechados
+  // Controle de visualização de mensagens para chats fechados ou com intervenção
   const [viewMessagesForClosedChat, setViewMessagesForClosedChat] = useState<Record<string, boolean>>({});
+  const [viewMessagesForInterventionChat, setViewMessagesForInterventionChat] = useState<Record<string, boolean>>({});
 
   // Função para normalizar texto (remover acentos, minúsculas)
   const normalizeText = (text: string) => {
@@ -1050,6 +1051,7 @@ const Atendimentos = () => {
     lastMessageSignatureRef.current = null;
     setShowScrollButton(false);
     setNewMessageCount(0);
+    setViewMessagesForInterventionChat(prev => ({...prev, [selectedChat || '']: false}));
     setTimeout(() => scrollToBottom(false), 300);
   }, [selectedChat]);
 
@@ -1846,8 +1848,9 @@ const Atendimentos = () => {
                   {(() => {
                     const isClosed = (selectedChatData.status || (selectedChatData as any).statusP) === 'concluido';
                     const hasIntervention = selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
+                    const showOverlay = hasIntervention && !isClosed && !viewMessagesForInterventionChat[selectedChatData.id];
                     
-                    if (isClosed || !hasIntervention) return null;
+                    if (!showOverlay) return null;
 
                     // Pega o resumo que vem do useChats (Supabase) ou procura nas mensagens
                     let summaryText = (selectedChatData as any).escalationSummary || 'Aguardando resumo da IA...';
@@ -1908,11 +1911,22 @@ const Atendimentos = () => {
                                 {takeOverChatMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <UserCheck className="w-3 h-3 mr-1" />}
                                 Começar a Atender
                               </Button>
+                            </div>
+                            <div className="flex gap-2">
                               <Button 
-                                className="flex-[0.4] h-7 px-2 text-[11px]"
+                                className="flex-1 h-7 text-[11px]"
+                                variant="outline"
+                                onClick={() => setViewMessagesForInterventionChat(prev => ({...prev, [selectedChatData.id]: true}))}
+                              >
+                                <MessageSquare className="w-3 h-3 mr-1" />
+                                Ver Mensagens
+                              </Button>
+                              <Button 
+                                className="flex-1 h-7 px-2 text-[11px]"
                                 variant="outline"
                                 onClick={() => setShowTransferModal(true)}
                               >
+                                <UserPlus className="w-3 h-3 mr-1" />
                                 Transferir
                               </Button>
                             </div>
@@ -1952,10 +1966,10 @@ const Atendimentos = () => {
                         const isClient = message.sender === 'user' || message.sender === 'client';
                         const isAgent = message.sender === 'agent' || message.sender === 'ai';
 
-                        // Nome do operador que enviou (override local > Chatwoot sender)
-                        const displaySenderName = messageSenderOverrides[message.id] || message.senderName || undefined;
+                        // Nome do operador que enviou: Chatwoot (fonte verdade) > override local (só fallback para msgs recém-enviadas sem senderName ainda)
+                        const displaySenderName = message.senderName || messageSenderOverrides[message.id] || undefined;
                         const prevMessage = index > 0 ? messages[index - 1] : null;
-                        const prevDisplaySenderName = prevMessage ? (messageSenderOverrides[prevMessage.id] || (prevMessage as any).senderName) : undefined;
+                        const prevDisplaySenderName = prevMessage ? ((prevMessage as any).senderName || messageSenderOverrides[prevMessage.id]) : undefined;
 
                         // É humano quando tem senderName (agente real, não IA)
                         const isHuman = isAgent && !!displaySenderName;

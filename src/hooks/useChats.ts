@@ -40,7 +40,8 @@ const translateSystemMessage = (content: string): string => {
     return 'Atendimento finalizado com sucesso';
   }
 
-  return 'Ação do sistema registrada';
+  // Se não reconhecer o padrão, retorna o texto original para não perder informações vitais (como resumos de IA)
+  return content;
 };
 
 const mapChatwootToChat = (conv: any): Chat => {
@@ -151,8 +152,17 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
   // Processamento do texto para mensagens de Atividade do sistema
   let finalContent = msg.content || '';
   if (msg.message_type === 2) {
-    finalSender = 'activity';
-    finalContent = translateSystemMessage(finalContent);
+    if (msg.private) {
+      // Notas privadas (como o Resumo da IA) não devem ser tratadas como "atividade" simples
+      finalSender = 'agent';
+      finalContent = msg.content || '';
+    } else {
+      finalSender = 'activity';
+      finalContent = translateSystemMessage(finalContent);
+    }
+  } else if (msg.private) {
+    finalSender = 'agent';
+    finalContent = msg.content || '';
   }
 
   // Extrair nome do agente que enviou (message_type 1 = outgoing)

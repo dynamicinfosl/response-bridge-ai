@@ -127,9 +127,28 @@ export const chatwootAPI = {
       body: JSON.stringify({ status }),
     }),
 
-  // Messages
-  getMessages: (conversationId: number) =>
-    chatwootFetch<ChatwootMessage[]>(`/conversations/${conversationId}/messages?t=${Date.now()}`),
+  getMessages: async (conversationId: number) => {
+    let allMessages: ChatwootMessage[] = [];
+    let beforeId: string | number = '';
+    
+    for (let i = 0; i < 5; i++) { // Busca até 5 páginas (100 mensagens)
+      const url = `/conversations/${conversationId}/messages?t=${Date.now()}${beforeId ? `&before=${beforeId}` : ''}`;
+      const response = await chatwootFetch<any>(url);
+      const messages: ChatwootMessage[] = response.data?.payload || response.payload || (Array.isArray(response) ? response : []);
+      
+      if (!Array.isArray(messages) || messages.length === 0) break;
+      
+      allMessages = [...allMessages, ...messages];
+      
+      // Chatwoot retorna as mensagens em ordem cronológica (mais antigas primeiro)
+      // Portanto, messages[0] é a mais antiga da página atual
+      if (messages.length < 20) break;
+      
+      beforeId = messages[0].id;
+    }
+    
+    return allMessages;
+  },
 
   markAsRead: (conversationId: number) =>
     chatwootFetch(`/conversations/${conversationId}/update_last_seen`, {

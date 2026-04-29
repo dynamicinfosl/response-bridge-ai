@@ -4,16 +4,137 @@ import { Loader2, Router as RouterIcon, CheckCircle2, XCircle } from 'lucide-rea
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { consultaConexaoAutenticada } from '@/lib/mk-api';
 
-const PORTS_TO_TRY = [80, 8080, 8888, 443];
+const PORTS_TO_TRY = [80, 8080, 8090, 8888, 8000, 9090, 443];
+const IPV4_REGEX = /\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?:\/\d+)?\b/;
+
+/** Campos que contêm o IP do roteador/cliente — em ordem de prioridade */
+const FRAMED_IP_KEYS = [
+  'framedipaddress',
+  'framedip',
+  'framed_ip',
+  'framed_ip_address',
+  'frameip',
+  'frame_ip',
+  'ip_conexao',
+  'conexao_ip',
+  'ip_atribuido',
+  'ip_atrib',
+  'ipaddr',
+  'ip_address',
+  'ipaddress',
+  'ip'
+];
+
+/** Campos que geralmente contêm IPs de infraestrutura (NAS, gateway, concentrador) — ignorar na varredura geral */
+const INFRA_IP_KEYS = [
+  'nasipaddress',
+  'nasip',
+  'nas_ip',
+  'nas_ip_address',
+  'nas_ipaddress',
+  'ip_nas',
+  'ipnas',
+  'nas_identifier',
+  'nas_id',
+  'concentrador',
+  'concentrador_ip',
+  'ip_concentrador',
+  'radius_ip',
+  'radiusip',
+  'server_ip',
+  'serverip',
+  'gateway',
+  'gatewayip',
+  'gateway_ip'
+];
+
+function cleanIp(raw: string): string {
+  return raw.includes('/') ? raw.substring(0, raw.indexOf('/')) : raw;
+}
+
+function extractIpFromString(text: string): string {
+  const match = String(text).match(IPV4_REGEX);
+  if (match) {
+    const ip = cleanIp(match[0]);
+    if (ip !== '0.0.0.0') return ip;
+  }
+  return '';
+}
+
+/** Busca IP priorizando campos framedip; ignora campos de infra; varredura geral apenas como fallback */
+function extractRouterIp(value: any, depth = 0): string {
+  if (!value || depth > 6) return '';
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const ip = extractRouterIp(parsed, depth + 1);
+        if (ip) return ip;
+      } catch (e) {
+        // Ignora erro de parse
+      }
+    }
+  }
+
+  if (typeof value === 'string' || typeof value === 'number') {
+    return extractIpFromString(String(value));
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const ip = extractRouterIp(item, depth + 1);
+      if (ip) return ip;
+    }
+    return '';
+  }
+
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+
+    // 1ª prioridade: campos framedip (IP do cliente)
+    for (const candidate of FRAMED_IP_KEYS) {
+      const found = keys.find((k) => k.toLowerCase() === candidate);
+      if (found && value[found]) {
+        const ip = extractIpFromString(String(value[found]));
+        if (ip) return ip;
+      }
+    }
+
+    // 2ª prioridade: recursão em sub-objetos/arrays, excluindo campos de infra
+    for (const key of keys) {
+      if (INFRA_IP_KEYS.includes(key.toLowerCase())) continue;
+      const child = value[key];
+      if (child && typeof child === 'object') {
+        const ip = extractRouterIp(child, depth + 1);
+        if (ip) return ip;
+      }
+    }
+
+    // 3º: varredura geral em strings (ainda ignorando campos de infra)
+    for (const key of keys) {
+      if (INFRA_IP_KEYS.includes(key.toLowerCase())) continue;
+      const child = value[key];
+      if (typeof child === 'string' || typeof child === 'number') {
+        const ip = extractIpFromString(String(child));
+        if (ip) return ip;
+      }
+    }
+  }
+
+  return '';
+}
 
 export default function RouterAccess() {
   const [searchParams] = useSearchParams();
   const rawIp = searchParams.get('ip');
+  const cleanedRawIp = rawIp ? extractIpFromString(rawIp) || rawIp : null;
   const cdConexao = searchParams.get('cd_conexao');
   
-  const [ip, setIp] = useState<string | null>(rawIp);
+  const [ip, setIp] = useState<string | null>(cleanedRawIp);
   const [currentPortIndex, setCurrentPortIndex] = useState(0);
-  const [status, setStatus] = useState<'fetching_ip' | 'connecting' | 'success' | 'failed'>(cdConexao && !rawIp ? 'fetching_ip' : 'connecting');
+  const [status, setStatus] = useState<'fetching_ip' | 'connecting' | 'success' | 'failed'>(cdConexao && !cleanedRawIp ? 'fetching_ip' : 'connecting');
   const [logs, setLogs] = useState<{ port: number; status: 'connecting' | 'failed' | 'success' }[]>([]);
   const hasStarted = useRef(false);
 
@@ -22,30 +143,9 @@ export default function RouterAccess() {
       if (!cdConexao) return;
       try {
         const res = await consultaConexaoAutenticada(cdConexao);
-        let foundIp = '';
-        if (Array.isArray(res) && res.length > 0) {
-          foundIp = res[0].framedip || res[0].framed_ip_address || res[0].ip_address || res[0].ip || res[0].ip_conexao;
-        } else if (res && typeof res === 'object') {
-          let innerIp = res.framedip || res.framed_ip_address || res.ip_address || res.ip || res.ip_conexao;
-          if (!innerIp) {
-            for (const key of Object.keys(res)) {
-              if (res[key] && typeof res[key] === 'object' && !Array.isArray(res[key])) {
-                 const inner: any = res[key];
-                 innerIp = inner.framedip || inner.framed_ip_address || inner.ip_address || inner.ip || inner.ip_conexao;
-                 if (innerIp) break;
-              } else if (Array.isArray(res[key]) && res[key].length > 0) {
-                 const inner = res[key][0];
-                 innerIp = inner.framedip || inner.framed_ip_address || inner.ip_address || inner.ip || inner.ip_conexao;
-                 if (innerIp) break;
-              }
-            }
-          }
-          foundIp = innerIp;
-        }
-        
-        if (typeof foundIp === 'string' && foundIp.includes('/')) {
-          foundIp = foundIp.substring(0, foundIp.indexOf('/'));
-        }
+        console.log('[RouterAccess] Resposta da API MK:', JSON.stringify(res));
+        const foundIp = extractRouterIp(res);
+        console.log('[RouterAccess] IP extraído:', foundIp);
 
         if (foundIp) {
           setIp(foundIp);
@@ -168,7 +268,7 @@ export default function RouterAccess() {
             <div className="mt-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-center space-y-2 animate-in fade-in zoom-in duration-300">
               <XCircle className="w-8 h-8 text-destructive mx-auto" />
               <p className="font-bold text-destructive">Não foi possível conectar.</p>
-              <p className="text-xs text-muted-foreground">O roteador não respondeu em nenhuma das portas testadas (80, 8080, 8888, 443). Verifique se ele está online e acessível na rede gerência.</p>
+              <p className="text-xs text-muted-foreground">O roteador não respondeu em nenhuma das portas testadas (80, 8080, 8090, 8888, 8000, 9090, 443). Verifique se ele está online e acessível na rede gerência.</p>
             </div>
           )}
           
