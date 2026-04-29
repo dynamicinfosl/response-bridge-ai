@@ -1245,8 +1245,8 @@ const Atendimentos = () => {
                 />
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              <div className="max-h-[600px] overflow-y-auto">
+            <CardContent className="p-0 flex-1 overflow-hidden flex flex-col min-h-0">
+              <div className="flex-1 overflow-y-auto min-h-0">
                 {filteredChats.length === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
