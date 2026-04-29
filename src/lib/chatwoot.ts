@@ -116,8 +116,8 @@ export const chatwootAPI = {
     }),
 
   assignAgent: (conversationId: number, agentId: number) =>
-    chatwootFetch(`/conversations/${conversationId}`, {
-      method: 'PATCH',
+    chatwootFetch(`/conversations/${conversationId}/assignments`, {
+      method: 'POST',
       body: JSON.stringify({ assignee_id: agentId }),
     }),
 
