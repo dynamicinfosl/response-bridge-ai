@@ -118,10 +118,26 @@ function initials(name?: string | null, email?: string): string {
   return src.slice(0, 2).toUpperCase();
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+    ),
+  ]);
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Colaboradores() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, loading: authLoading, accessToken } = useAuth();
+
+  const requireAccessToken = useCallback(() => {
+    if (!accessToken) {
+      throw new Error('Sessão expirada ou inválida. Faça login novamente.');
+    }
+    return accessToken;
+  }, [accessToken]);
   const { toast } = useToast();
 
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
@@ -144,6 +160,15 @@ export default function Colaboradores() {
   // ── Load ────────────────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!currentUser || !accessToken) {
+      setColaboradores([]);
+      return;
+    }
+
     setLoading(true);
     try {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -155,7 +180,7 @@ export default function Colaboradores() {
           method: 'GET',
           headers: {
             apikey: ANON_KEY,
-            Authorization: `Bearer ${ANON_KEY}`,
+            Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
         }
@@ -186,12 +211,16 @@ export default function Colaboradores() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [authLoading, currentUser, accessToken, toast]);
 
   // Disparar quando currentUser estiver disponível
   useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
     load();
-  }, [load]);
+  }, [authLoading, load]);
 
   // ── Filter ──────────────────────────────────────────────────────────────────
 
@@ -251,12 +280,13 @@ export default function Colaboradores() {
 
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const accessToken = requireAccessToken();
 
       const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/admin_create_user`, {
         method: 'POST',
         headers: {
           'apikey': ANON_KEY,
-          'Authorization': `Bearer ${ANON_KEY}`, // Note: we are using anon key here. The function is SECURITY DEFINER so it will bypass RLS internally.
+          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -273,18 +303,22 @@ export default function Colaboradores() {
         throw new Error(`Falha ao criar usário (RPC): ${errorText}`);
       }
       
-      const newUserId = await rpcRes.json();
+      const rpcData = await rpcRes.json();
 
 
-      if (!newUserId) throw new Error('Usuário não criado (retorno vazio)');
+      if (!rpcData?.id) throw new Error('Usuário não criado (retorno vazio)');
 
-      const userId = newUserId as string;
+      const userId = rpcData.id as string;
 
       // 🔄 Sincronizar com Chatwoot
       let chatwootId: number | null = null;
       try {
         const cwRole = (form.role === 'master' || form.role === 'admin') ? 'administrator' : 'agent';
-        const cwAgent = await chatwootAPI.createAgent(form.email, form.full_name, cwRole);
+        const cwAgent = await withTimeout(
+          chatwootAPI.createAgent(form.email, form.full_name, cwRole),
+          8000,
+          'Timeout ao sincronizar usuário com Chatwoot.'
+        );
         chatwootId = cwAgent?.id || null;
       } catch (cwErr) {
         console.error('Falha ao sincronizar com Chatwoot:', cwErr);
@@ -298,7 +332,7 @@ export default function Colaboradores() {
           method: 'PATCH',
           headers: {
             'apikey': ANON_KEY,
-            'Authorization': `Bearer ${ANON_KEY}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=minimal',
           },
@@ -335,11 +369,16 @@ export default function Colaboradores() {
     setSaving(true);
     try {
       const cwRole = (u.role === 'master' || u.role === 'admin') ? 'administrator' : 'agent';
-      const cwAgent = await chatwootAPI.createAgent(u.email, u.full_name || u.email, cwRole);
+      const cwAgent = await withTimeout(
+        chatwootAPI.createAgent(u.email, u.full_name || u.email, cwRole),
+        8000,
+        'Timeout ao sincronizar usuário com Chatwoot.'
+      );
       
       if (cwAgent?.id) {
         const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
         const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const accessToken = requireAccessToken();
 
         await fetch(
           `${SUPABASE_URL}/rest/v1/users?id=eq.${u.id}`,
@@ -347,7 +386,7 @@ export default function Colaboradores() {
             method: 'PATCH',
             headers: {
               'apikey': ANON_KEY,
-              'Authorization': `Bearer ${ANON_KEY}`,
+              'Authorization': `Bearer ${accessToken}`,
               'Content-Type': 'application/json',
               'Prefer': 'return=minimal',
             },
@@ -370,6 +409,7 @@ export default function Colaboradores() {
     try {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const accessToken = requireAccessToken();
 
       const body = {
         full_name:    form.full_name,
@@ -386,7 +426,7 @@ export default function Colaboradores() {
           method: 'PATCH',
           headers: {
             'apikey': ANON_KEY,
-            'Authorization': `Bearer ${ANON_KEY}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=minimal',
           },
@@ -410,7 +450,7 @@ export default function Colaboradores() {
             method: 'POST',
             headers: {
               'apikey': ANON_KEY,
-              'Authorization': `Bearer ${ANON_KEY}`,
+              'Authorization': `Bearer ${accessToken}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -449,7 +489,11 @@ export default function Colaboradores() {
       // 🔄 Remover do Chatwoot se existir ID
       if (selected.chatwoot_id) {
         try {
-          await chatwootAPI.deleteAgent(selected.chatwoot_id);
+          await withTimeout(
+            chatwootAPI.deleteAgent(selected.chatwoot_id),
+            8000,
+            'Timeout ao remover usuário do Chatwoot.'
+          );
         } catch (cwErr) {
           console.error('Falha ao remover do Chatwoot:', cwErr);
         }
@@ -457,6 +501,7 @@ export default function Colaboradores() {
 
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const accessToken = requireAccessToken();
 
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/users?id=eq.${selected.id}`,
@@ -464,7 +509,7 @@ export default function Colaboradores() {
           method: 'DELETE',
           headers: {
             'apikey': ANON_KEY,
-            'Authorization': `Bearer ${ANON_KEY}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Prefer': 'return=minimal',
           },
         }

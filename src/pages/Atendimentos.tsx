@@ -171,18 +171,26 @@ const Atendimentos = () => {
   const [showAudioRecorder, setShowAudioRecorder] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('active');
   const [sectorFilter, setSectorFilter] = useState<string>('all');
   const [chatsToShow, setChatsToShow] = useState<number>(20); // Quantidade inicial de chats a mostrar
   const [searchQuery, setSearchQuery] = useState<string>(''); // Busca de conversas
   const [showScrollButton, setShowScrollButton] = useState(false); // Mostrar botão de scroll
   const [newMessageCount, setNewMessageCount] = useState(0); // Contador de novas mensagens
+  const [localHumanAttendants, setLocalHumanAttendants] = useState<Record<string, { name?: string; area?: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('localHumanAttendants');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
   // Painel resumo cliente MK - Gerenciamento por chat para evitar vazamento de dados
   const [showBuscarClienteMK, setShowBuscarClienteMK] = useState(false);
   const [showMkPanel, setShowMkPanel] = useState(false);
-  const [suggestedMessage, setSuggestedMessage] = useState<string | null>(null);
   const [chatMKMap, setChatMKMap] = useState<Record<string, { cd: string; cliente: MKClienteDoc }>>({});
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [messageSenderOverrides, setMessageSenderOverrides] = useState<Record<string, string>>({});
   
   // Identidade derivada do chat selecionado
   const currentMKIdentity = selectedChat ? chatMKMap[selectedChat] : null;
@@ -230,11 +238,31 @@ const Atendimentos = () => {
     else if (blobType.includes('mpeg') || blobType.includes('mp3')) { ext = 'mp3'; mime = 'audio/mpeg'; }
     else if (blobType.includes('wav')) { ext = 'wav'; mime = 'audio/wav'; }
     const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: mime });
+    const shouldAutoAssign = !selectedChatData?.assigneeId && !!user?.chatwoot_id;
+    if (shouldAutoAssign) {
+      setLocalHumanAttendants(prev => ({
+        ...prev,
+        [selectedChat]: { name: user?.name, area: user?.area || undefined },
+      }));
+    }
     sendAttachmentMutation.mutate(
-      { chatId: selectedChat, file, content: '' },
       {
-        onSuccess: () => {
+        chatId: selectedChat,
+        file,
+        content: '',
+        operatorChatwootId: user?.chatwoot_id,
+        currentAssigneeId: selectedChatData?.assigneeId,
+        labels: selectedChatData?.labels,
+      },
+      {
+        onSuccess: (response: any) => {
           setShowAudioRecorder(false);
+          if (response?.id && user?.name) {
+            setMessageSenderOverrides(prev => ({
+              ...prev,
+              [String(response.id)]: user.name,
+            }));
+          }
         },
         onError: (err) => {
           toast.error('Erro ao enviar áudio');
@@ -349,6 +377,12 @@ const Atendimentos = () => {
     return sectors.length === 0;
   };
 
+  // Função para verificar se um chat precisa de intervenção humana
+  const needsHumanIntervention = (labels: string[]) => {
+    const normalizedLabels = (labels || []).map(l => normalizeText(l));
+    return normalizedLabels.includes('precisa_atendimento');
+  };
+
   // Helpers de permissão por perfil
   const isAdminOrMaster = user?.role === 'master' || user?.role === 'admin';
   const isEncarregado = user?.role === 'encarregado';
@@ -374,7 +408,6 @@ const Atendimentos = () => {
     if (selectedChat) {
       markAsReadMutation.mutate(selectedChat);
       setShowMkPanel(false); // Fecha o painel ao trocar de chat
-      setSuggestedMessage(null); // Limpa as sugestões de mensagens
     }
   }, [selectedChat]);
 
@@ -568,31 +601,8 @@ const Atendimentos = () => {
 
     let rawChats: any[] = [];
 
-    // Se já é um array, usa direto
     if (Array.isArray(chatsData)) {
       rawChats = chatsData;
-      // Filtrar objetos que claramente não são chats (ex: {success: true})
-      rawChats = rawChats.filter(item => {
-        if (!item || typeof item !== 'object') return false;
-
-        // Se tem 'json' dentro, é um chat válido (formato do n8n)
-        if ('json' in item && typeof item.json === 'object') {
-          return true;
-        }
-
-        // Se tem apenas 'success' ou 'pairedItem' (sem json), não é um chat
-        const keys = Object.keys(item);
-        if (keys.length <= 2 && (keys.includes('success') || keys.includes('pairedItem'))) {
-          return false;
-        }
-
-        // Se tem id, chatid, pushName, etc, é um chat válido
-        if ('id' in item || 'chatid' in item || 'pushName' in item || 'pushname' in item) {
-          return true;
-        }
-
-        return true;
-      });
       rawChats = rawChats.filter(item => {
         if (!item || typeof item !== 'object') return false;
         if ('json' in item && typeof item.json === 'object') return true;
@@ -601,19 +611,12 @@ const Atendimentos = () => {
         if ('id' in item || 'chatid' in item || 'pushName' in item || 'pushname' in item) return true;
         return true;
       });
-    }
-    // Se é um objeto, verifica se tem propriedade 'messages' (quando vem do json_agg)
-    else if (typeof chatsData === 'object' && chatsData !== null) {
-      // Se for um objeto com propriedade messages (array), é um resultado do json_agg
+    } else if (typeof chatsData === 'object' && chatsData !== null) {
       if ('messages' in chatsData && Array.isArray((chatsData as any).messages)) {
         rawChats = (chatsData as any).messages;
-      }
-      // Se o objeto tem propriedades que indicam que é um chat (id, chatid, etc)
-      else if ('id' in chatsData || 'chatid' in chatsData || 'pushName' in chatsData || 'pushname' in chatsData) {
+      } else if ('id' in chatsData || 'chatid' in chatsData || 'pushName' in chatsData || 'pushname' in chatsData) {
         rawChats = [chatsData];
-      }
-      // Tenta encontrar arrays dentro
-      else {
+      } else {
         const keys = Object.keys(chatsData);
         for (const key of keys) {
           const value = (chatsData as any)[key];
@@ -625,24 +628,17 @@ const Atendimentos = () => {
           }
         }
       }
-
-      // Se não encontrou nada, não cria chat fantasma - retorna array vazio
-      // (removido: não criar chat a partir de objeto vazio)
     }
 
-    // Extrair dados de dentro de objetos {json: {...}} se existir (formato do n8n)
-    rawChats = rawChats.map((item, idx) => {
-      // Se o item tem uma propriedade 'json' e é um objeto, extrai o json
+    rawChats = rawChats.map((item) => {
       if (item && typeof item === 'object' && 'json' in item && typeof item.json === 'object') {
         return item.json;
       }
       return item;
     });
 
-    // Normalizar os dados e filtrar chats inválidos
-    const normalizedChats = rawChats
+    return rawChats
       .map(chat => {
-        // Tratar pushName: remover \n e converter string "null" para null real
         let pushName = chat.pushName || chat.pushname || null;
         if (typeof pushName === 'string') {
           pushName = pushName.trim().replace(/\n/g, '');
@@ -651,20 +647,17 @@ const Atendimentos = () => {
           }
         }
 
-        // Preservar id original e phone original
         const chatId = chat.id?.toString() || chat.chatid?.toString() || null;
         const phone = chat.phone?.toString() || chat.clientPhone?.toString() || '';
 
-        const normalized = {
+        return {
           ...chat,
           id: chatId,
-          phone: phone,
-          pushName: chat.pushName || chat.pushname || null,
+          phone,
+          pushName,
           lastMessage: chat.lastMessage || chat.lastmessage || null,
           clientPhone: phone,
         };
-
-        return normalized;
       })
       .filter(chat => {
         const validId = chat.id &&
@@ -673,18 +666,11 @@ const Atendimentos = () => {
           chat.id !== 'null' &&
           chat.id !== 'undefined';
 
-        // Ignorar objetos que são apenas respostas de sucesso (ex: {success: true})
         const isSuccessResponse = chat.success === true && !chat.id && !chat.chatid;
-
-        const isValid = validId && !isSuccessResponse;
-
-        return isValid;
+        return validId && !isSuccessResponse;
       });
-
-    return normalizedChats;
   })();
 
-  // Garantir que messages é sempre um array também e normalizar
   // Garantir que messages é sempre um array também e normalizar
   const messages = (() => {
     if (!messagesData) return [];
@@ -700,15 +686,13 @@ const Atendimentos = () => {
 
     return rawMessages
       .map((msg, idx) => {
-        // Se já vier mapeado pelo hook useMessages (tipo Message), mantemos
-        // Senão, aplicamos uma normalização mínima de segurança
         const stableId = msg.id?.toString() || `msg_${idx}_${Date.now()}`;
         const chatId = msg.chatId || selectedChat || '';
 
         return {
           ...msg,
           id: stableId,
-          chatId: chatId,
+          chatId,
         };
       })
       .filter(msg => {
@@ -737,7 +721,6 @@ const Atendimentos = () => {
         const timestampTime = new Date(chat.updatedAt || chat.time || 0).getTime();
         const prevTime = lastSeenTimes.current[chat.id];
 
-        // Se a conversa está aberta, zera o contador
         if (selectedChat === chat.id) {
           if (next[chat.id] > 0) {
             next[chat.id] = 0;
@@ -754,14 +737,12 @@ const Atendimentos = () => {
             hasChanges = true;
           }
         } else if (prevTime && timestampTime > prevTime) {
-          // Houve uma nova atualização e o chat não está selecionado
           if (chat.lastMessageSender === 'user') {
             next[chat.id] = (next[chat.id] || 0) + 1;
             hasChanges = true;
           }
           lastSeenTimes.current[chat.id] = timestampTime;
         } else if (!prevTime) {
-          // Novo chat que acabou de aparecer
           if (chat.lastMessageSender === 'user') {
             next[chat.id] = (chat.unread && chat.unread > 0) ? chat.unread : 1;
             hasChanges = true;
@@ -956,6 +937,15 @@ const Atendimentos = () => {
     return null;
   };
 
+  const formatAttendantDisplay = (chat: { id?: string; attendant?: string; attendantArea?: string; assigneeId?: number; labels?: string[] }) => {
+    const localFallback = chat.id ? localHumanAttendants[chat.id] : undefined;
+    const attendantName = chat.attendant?.trim() || localFallback?.name?.trim();
+    const attendantArea = chat.attendantArea?.trim() || localFallback?.area?.trim();
+    if (!attendantName && !chat.assigneeId) return '';
+    if (attendantName && attendantArea) return `${attendantName} | ${attendantArea}`;
+    return attendantName || 'Operador atribuído';
+  };
+
   // Função para fazer scroll até o final
   const scrollToBottom = (smooth: boolean = true) => {
     if (messagesContainerRef.current) {
@@ -1059,21 +1049,38 @@ const Atendimentos = () => {
     lastMessageSignatureRef.current = null;
     setShowScrollButton(false);
     setNewMessageCount(0);
-    setSuggestedMessage(null);
     setTimeout(() => scrollToBottom(false), 300);
   }, [selectedChat]);
 
   const handleSendMessage = () => {
-    if (messageText.trim() && selectedChat) {
-      sendMessageMutation.mutate({
-        chatId: selectedChat,
-        content: messageText,
-        sender: 'agent',
-        labels: selectedChatData?.labels
-      });
+    if (selectedChat && messageText.trim()) {
+      const shouldAutoAssign = !selectedChatData?.assigneeId && !!user?.chatwoot_id;
+      if (shouldAutoAssign) {
+        setLocalHumanAttendants(prev => ({
+          ...prev,
+          [selectedChat]: { name: user?.name, area: user?.area || undefined },
+        }));
+      }
+      sendMessageMutation.mutate(
+        {
+          chatId: selectedChat,
+          content: messageText,
+          labels: selectedChatData?.labels,
+          operatorChatwootId: user?.chatwoot_id,
+          currentAssigneeId: selectedChatData?.assigneeId,
+        },
+        {
+          onSuccess: (response: any) => {
+            if (response?.id && user?.name) {
+              setMessageSenderOverrides(prev => ({
+                ...prev,
+                [String(response.id)]: user.name,
+              }));
+            }
+          },
+        }
+      );
       setMessageText('');
-      setSuggestedMessage(null);
-      // Scroll automático após enviar mensagem
       setTimeout(() => {
         scrollToBottom(true);
       }, 100);
@@ -1136,6 +1143,8 @@ const Atendimentos = () => {
     const chatLabels = chat.labels || [];
     const isTriagem = isTriagemChat(chatLabels);
     const chatSectors = chatLabels.map(l => getSectorFromLabel(l)).filter(Boolean) as string[];
+    const hasHumanIntervention = needsHumanIntervention(chatLabels);
+    const chatStatus = chat.status || (chat as any).statusP;
 
     // Se não for admin/master, aplicamos restrição de setor/responsável
     if (!isAdminOrMaster) {
@@ -1151,8 +1160,12 @@ const Atendimentos = () => {
     }
 
     // 2. FILTRO DE STATUS
-    if (statusFilter !== 'all') {
-      const chatStatus = chat.status || (chat as any).statusP;
+    if (statusFilter === 'active') {
+      if (chatStatus === 'concluido' && !hasHumanIntervention) return false;
+      if (chatStatus !== 'active' && !hasHumanIntervention) return false;
+    } else if (statusFilter === 'needs_human') {
+      if (!hasHumanIntervention) return false;
+    } else if (statusFilter !== 'all') {
       if (chatStatus !== statusFilter) return false;
     }
 
@@ -1275,9 +1288,11 @@ const Atendimentos = () => {
                     onChange={(e) => setStatusFilter(e.target.value)}
                     className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
+                    <option value="active">Status: Em andamento</option>
+                    <option value="needs_human">Necessidade de intervenção</option>
                     <option value="all">Status: Todos</option>
                     <option value="pendente">Pendentes</option>
-                    <option value="em_andamento">Em Andamento</option>
+                    <option value="active">Em Andamento</option>
                     <option value="concluido">Concluídos</option>
                   </select>
                   <select
@@ -1382,7 +1397,7 @@ const Atendimentos = () => {
                                   return (
                                     <div className="flex items-start gap-1.5 mb-2 w-full">
                                       {chat.lastMessageSender === 'agent' && (
-                                        <Bot className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-1" />
+                                        <Bot className="w-3.5 h-3.5 mt-1 text-primary flex-shrink-0" />
                                       )}
                                       <div className="flex flex-col gap-1 min-w-0 flex-1">
                                         <div className="flex items-center">
@@ -1414,7 +1429,7 @@ const Atendimentos = () => {
                                 return (
                                   <div className="flex items-center gap-1.5 mb-2 overflow-hidden w-full">
                                     {chat.lastMessageSender === 'agent' && (
-                                      <Bot className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                      <Bot className="w-3.5 h-3.5 flex-shrink-0" />
                                     )}
                                     <p className={cn(
                                       "text-sm truncate",
@@ -1427,36 +1442,32 @@ const Atendimentos = () => {
                               })()}
                               <div className="flex items-center justify-between mt-2">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  {getChannelIcon(chat.channel || chat.WhatsApp || 'WhatsApp')}
-                                  <Badge variant="outline" className={cn("px-2 py-0.5", status.className)}>
-                                    {status.label}
-                                  </Badge>
+                                  <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0 rounded border border-border/50">
+                                    {getChannelIcon(chat.channel || chat.WhatsApp || 'WhatsApp')}
+                                    <span className="text-[9px] sm:text-[10px] font-medium text-muted-foreground whitespace-nowrap lowercase">
+                                      {chat.channel || chat.WhatsApp || 'WhatsApp'}
+                                    </span>
+                                  </div>
                                   {(() => {
                                     const sector = getSectorInfo(chat.labels);
                                     if (!sector) return null;
                                     return (
-                                      <Badge variant="outline" className={cn("px-2 py-0.5 font-bold uppercase text-[10px]", sector.className)}>
+                                      <Badge variant="outline" className={cn("px-1.5 py-0 font-bold uppercase text-[9px]", sector.className)}>
                                         {sector.label}
                                       </Badge>
                                     );
                                   })()}
                                   {chat.status !== 'concluido' && (
                                     <div className="flex flex-wrap gap-2 mt-1">
-                                      {chat.attendant && (needsHuman || chat.labels?.includes('agente-off')) ? (
+                                      {formatAttendantDisplay(chat) ? (
                                         <span className="text-[11px] text-muted-foreground font-semibold flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded-md">
-                                          <UserCheck className="w-3 h-3 text-primary" />
-                                          Sendo atendido por: {chat.attendant}
+                                          <User className="w-3 h-3 text-primary" />
+                                          Sendo atendido por: {formatAttendantDisplay(chat)}
                                         </span>
                                       ) : (!needsHuman && !chat.labels?.includes('agente-off')) ? (
                                         <span className="text-[11px] text-primary font-bold flex items-center gap-1 bg-primary/5 px-2 py-0.5 rounded-md">
                                           <Bot className="w-3 h-3" />
                                           Sendo atendido por: IA ATIVA
-                                        </span>
-                                      ) : chat.attendant ? (
-                                        /* Fallback caso tenha atendente mas labels estejam em transição */
-                                        <span className="text-[11px] text-muted-foreground font-semibold flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded-md">
-                                          <UserCheck className="w-3 h-3 text-primary" />
-                                          Sendo atendido por: {chat.attendant}
                                         </span>
                                       ) : null}
                                     </div>
@@ -1616,6 +1627,21 @@ const Atendimentos = () => {
                         <p className="text-[10px] text-muted-foreground truncate">
                           {formatPhoneNumber(selectedChatData.phone, selectedChatData.id)}
                         </p>
+                        {(selectedChatData.status || (selectedChatData as any).statusP) !== 'concluido' && (
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            {formatAttendantDisplay(selectedChatData) ? (
+                              <span className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded-md">
+                                <User className="w-3 h-3 text-primary" />
+                                Sendo atendido por: {formatAttendantDisplay(selectedChatData)}
+                              </span>
+                            ) : (!selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento') && !selectedChatData.labels?.includes('agente-off')) ? (
+                              <span className="text-[10px] text-primary font-bold flex items-center gap-1 bg-primary/5 px-2 py-0.5 rounded-md">
+                                <Bot className="w-3 h-3" />
+                                Sendo atendido por: IA ATIVA
+                              </span>
+                            ) : null}
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 overflow-x-auto no-scrollbar">
                           <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0 rounded border border-border/50">
                             {getChannelIcon(selectedChatData.channel || selectedChatData.WhatsApp || 'WhatsApp')}
@@ -1642,7 +1668,7 @@ const Atendimentos = () => {
                           variant={cdClienteMK ? "default" : "outline"}
                           size="sm"
                           className={cn(
-                            "h-auto py-1 text-[10px] px-2 flex flex-col items-center justify-center text-center",
+                            "h-auto py-1 text-[10px] flex flex-col items-center justify-center text-center",
                             cdClienteMK ? "bg-green-600 hover:bg-green-700 text-white border-green-700 shadow-sm" : ""
                           )}
                           onClick={() => { 
@@ -1863,14 +1889,18 @@ const Atendimentos = () => {
                               <Button 
                                 className="flex-1 h-7 text-[11px] shadow-sm bg-red-600 hover:bg-red-700 text-white" 
                                 onClick={() => {
+                                  setLocalHumanAttendants(prev => ({
+                                    ...prev,
+                                    [selectedChatData.id]: {
+                                      name: user?.name,
+                                      area: user?.area || undefined,
+                                    },
+                                  }));
                                   takeOverChatMutation.mutate({
                                     id: selectedChatData.id,
-                                    labels: selectedChatData.labels
+                                    labels: selectedChatData.labels,
+                                    attendantId: user?.chatwoot_id
                                   });
-                                  const firstName = formatClientName(selectedChatData).split(' ')[0] || '';
-                                  const clientGreeting = firstName ? `, ${firstName}` : '';
-                                  // Essa é a mensagem placeholder que será substituída por uma geração de IA no futuro
-                                  setSuggestedMessage(`Olá${clientGreeting}! Meu nome é ${user?.name?.split(' ')[0] || 'atendente'}. Vi que você precisa de ajuda, já li o resumo e vou dar continuidade ao seu atendimento.`);
                                 }}
                                 disabled={takeOverChatMutation.isPending}
                               >
@@ -1901,9 +1931,8 @@ const Atendimentos = () => {
                       <div className="sticky top-2 z-20 flex justify-center pointer-events-none">
                         <Button
                           onClick={() => scrollToBottom(true)}
+                          className="rounded-full shadow-xl bg-white/95 backdrop-blur-sm hover:bg-white border border-border text-foreground h-11 px-4 flex items-center gap-2 transition-all hover:shadow-2xl hover:scale-105"
                           size="sm"
-                          className="pointer-events-auto rounded-full bg-background/80 backdrop-blur border border-border text-foreground shadow-sm hover:bg-background"
-                          variant="outline"
                         >
                           {newMessageCount} nova{newMessageCount > 1 ? 's' : ''} mensagem{newMessageCount > 1 ? 's' : ''}
                         </Button>
@@ -1914,7 +1943,6 @@ const Atendimentos = () => {
                         <div className="text-center bg-white/80 backdrop-blur-sm p-6 rounded-xl shadow-sm">
                           <MessageSquare className="w-12 h-12 mx-auto mb-3 text-[#54656f]" />
                           <p className="text-[#54656f] font-medium">Nenhuma mensagem ainda</p>
-                          <p className="text-[#8696a0] text-sm mt-1">Inicie a conversa</p>
                         </div>
                       </div>
                     ) : (
@@ -1923,14 +1951,26 @@ const Atendimentos = () => {
                         const isClient = message.sender === 'user' || message.sender === 'client';
                         const isAgent = message.sender === 'agent' || message.sender === 'ai';
 
-                        // Verifica se é o mesmo remetente da mensagem anterior (para agrupar)
+                        // Nome do operador que enviou (override local > Chatwoot sender)
+                        const displaySenderName = messageSenderOverrides[message.id] || message.senderName || undefined;
                         const prevMessage = index > 0 ? messages[index - 1] : null;
+                        const prevDisplaySenderName = prevMessage ? (messageSenderOverrides[prevMessage.id] || (prevMessage as any).senderName) : undefined;
+
+                        // Verifica se é o mesmo remetente da mensagem anterior (para agrupar)
                         const isSameSender = prevMessage && (
                           (prevMessage.sender === message.sender) ||
                           ((prevMessage.sender === 'user' || prevMessage.sender === 'client') &&
                             (message.sender === 'user' || message.sender === 'client')) ||
                           ((prevMessage.sender === 'agent' || prevMessage.sender === 'ai') &&
                             (message.sender === 'agent' || message.sender === 'ai'))
+                        );
+
+                        // Mostrar nome do operador quando muda de remetente ou muda de agente
+                        const showAgentName = isAgent && displaySenderName && (
+                          !prevMessage ||
+                          prevMessage.sender === 'user' || prevMessage.sender === 'client' ||
+                          prevMessage.sender === 'activity' ||
+                          prevDisplaySenderName !== displaySenderName
                         );
 
                         // Formata horário (HH:MM) - corrige timezone
@@ -2038,6 +2078,10 @@ const Atendimentos = () => {
                                     : ""
                                 )
                               )}>
+                                {/* Nome do operador que enviou */}
+                                {showAgentName && (
+                                  <p className="text-[11px] font-semibold text-[#1b72e8] mb-0.5">{displaySenderName}</p>
+                                )}
                                 {/* Renderizar conteúdo baseado no tipo */}
                                 {(() => {
                                   // Filtrar conteúdo de placeholder ("file" ou vindo vazio)
@@ -2173,18 +2217,15 @@ const Atendimentos = () => {
                                                     const arr = Array.isArray(r) ? r : r ? [r] : [];
                                                     const first = arr[0];
                                                     if (first) {
-                                                      const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? (first as any).CodigoPessoa ?? (first as any).CodPessoa ?? (first as any).id ?? '');
-                                                      const nome = String((first as any).nome ?? (first as any).NomePessoa ?? (first as any).nome_cliente ?? (first as any).Nome ?? (first as any).RazaoSocial ?? (first as any).Email ?? 'Desconhecido');
-                                                      
-                                                      toast.success(`Cliente ${nome || cd} encontrado!`);
+                                                      const cd = String((first as any).cd_cliente ?? (first as any).cdcliente ?? '');
                                                       if (selectedChat) {
                                                         setChatMKMap(prev => ({
                                                           ...prev,
                                                           [selectedChat]: { cd, cliente: first as MKClienteDoc }
                                                         }));
-                                                        setShowMkPanel(true);
-                                                        window.dispatchEvent(new CustomEvent('mk-panel-unminimize'));
                                                       }
+                                                      setShowBuscarClienteMK(false);
+                                                      setSearchMKValue('');
                                                     } else {
                                                       toast.error(`CPF ${foundCpf} não localizado no MKCloud.`);
                                                     }
@@ -2256,60 +2297,8 @@ const Atendimentos = () => {
                   )}
                 </CardContent>
 
-                {/* Bugio de Sugestão de IA */}
-                {suggestedMessage && (
-                  <div className="absolute bottom-[4.5rem] left-0 right-0 px-4 z-20 flex justify-center animate-in slide-in-from-bottom-2 fade-in duration-200">
-                    <div className="bg-white border shadow-[0_-4px_10px_rgba(0,0,0,0.05)] rounded-xl flex items-center gap-3 p-2.5 max-w-2xl w-full">
-                      <div className="bg-primary/10 p-1.5 rounded-full flex-shrink-0">
-                        <Bot className="w-5 h-5 text-primary" />
-                      </div>
-                      <div 
-                        className="flex-1 min-w-0 cursor-pointer overflow-hidden rounded-md group"
-                        onClick={() => {
-                          setMessageText(suggestedMessage);
-                          setSuggestedMessage(null);
-                        }}
-                      >
-                        <p className="text-[10px] text-muted-foreground mb-0.5 font-bold uppercase tracking-wider group-hover:text-primary transition-colors"> Sugestão de Resposta (Clique para usar)</p>
-                        <p className="text-[13px] text-foreground truncate group-hover:text-primary transition-colors">
-                          {suggestedMessage}
-                        </p>
-                      </div>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground flex-shrink-0 rounded-full hover:bg-red-50 hover:text-red-600" onClick={() => setSuggestedMessage(null)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
                 {/* Area Footer - Input & Sugestões */}
                 <div className="relative">
-                  {/* Bugio de Sugestão de IA */}
-                  {suggestedMessage && (
-                    <div className="absolute bottom-full left-0 right-0 px-4 mb-2 z-20 flex justify-center animate-in slide-in-from-bottom-2 fade-in duration-200">
-                      <div className="bg-white border shadow-lg rounded-xl flex items-center gap-3 p-3 max-w-2xl w-full">
-                        <div className="bg-primary/10 p-2 rounded-full flex-shrink-0">
-                          <Bot className="w-5 h-5 text-primary" />
-                        </div>
-                        <div 
-                          className="flex-1 min-w-0 cursor-pointer overflow-hidden rounded-md group"
-                          onClick={() => {
-                            setMessageText(suggestedMessage);
-                            setSuggestedMessage(null);
-                          }}
-                        >
-                          <p className="text-[11px] text-muted-foreground mb-0.5 font-bold uppercase tracking-wider group-hover:text-primary transition-colors">Sugestão de Resposta (Clique para usar)</p>
-                          <p className="text-[13px] text-foreground truncate group-hover:text-primary transition-colors">
-                            {suggestedMessage}
-                          </p>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground flex-shrink-0 rounded-full hover:bg-red-50 hover:text-red-600 transition-colors" onClick={() => setSuggestedMessage(null)}>
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Message Input - Estilo WhatsApp */}
                   <div className="p-3 bg-[#f0f2f5] border-t border-[#e9edef]">
                     {showAudioRecorder && selectedChat ? (
@@ -2337,11 +2326,31 @@ const Atendimentos = () => {
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file && selectedChat) {
+                              const shouldAutoAssign = !selectedChatData?.assigneeId && !!user?.chatwoot_id;
+                              if (shouldAutoAssign) {
+                                setLocalHumanAttendants(prev => ({
+                                  ...prev,
+                                  [selectedChat]: { name: user?.name, area: user?.area || undefined },
+                                }));
+                              }
                               sendAttachmentMutation.mutate(
-                                { chatId: selectedChat, file, content: '' },
                                 {
-                                  onSuccess: () => {
+                                  chatId: selectedChat,
+                                  file,
+                                  content: '',
+                                  operatorChatwootId: user?.chatwoot_id,
+                                  currentAssigneeId: selectedChatData?.assigneeId,
+                                  labels: selectedChatData?.labels,
+                                },
+                                {
+                                  onSuccess: (response: any) => {
                                     toast.success('Anexo enviado');
+                                    if (response?.id && user?.name) {
+                                      setMessageSenderOverrides(prev => ({
+                                        ...prev,
+                                        [String(response.id)]: user.name,
+                                      }));
+                                    }
                                   },
                                   onError: (err) => {
                                     toast.error('Erro ao enviar anexo');

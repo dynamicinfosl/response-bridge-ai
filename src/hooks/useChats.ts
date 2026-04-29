@@ -6,6 +6,15 @@ import { logAuditAction } from '../lib/audit';
 
 // Adaptadores para manter compatibilidade com a UI existente
 
+const formatUserArea = (area?: string | null) => {
+  if (!area) return '';
+  const normalized = area.toLowerCase().trim();
+  if (normalized === 'tecnica' || normalized === 'tecnico') return 'Técnico';
+  if (normalized === 'comercial') return 'Comercial';
+  if (normalized === 'financeiro') return 'Financeiro';
+  return area;
+};
+
 // Helper para traduzir mensagens internas do sistema sem expor o conceito de "etiquetas"
 const translateSystemMessage = (content: string): string => {
   if (!content) return '';
@@ -38,6 +47,12 @@ const mapChatwootToChat = (conv: any): Chat => {
   const contact = conv.contact || conv.meta?.sender || {};
   const phone = contact.phone_number || contact.phone || '';
   const name = contact.name || contact.pushName || contact.pushname || '';
+  const assignee = conv.meta?.assignee || conv.assignee || null;
+  const rawAssigneeId = assignee?.id ?? conv.meta?.assignee_id ?? conv.assignee_id;
+  const assigneeId = rawAssigneeId !== undefined && rawAssigneeId !== null && rawAssigneeId !== ''
+    ? Number(rawAssigneeId)
+    : undefined;
+  const assigneeName = assignee?.name || conv.meta?.assignee_name || conv.assignee_name;
 
   // Tenta extrair timestamp mais recente
   // No Chatwoot, timestamps podem ser segundos ou ISO strings
@@ -89,9 +104,9 @@ const mapChatwootToChat = (conv: any): Chat => {
     lastMessageSender: lastMsgSender as any,
     time: timestamp,
     unread: conv.unread_count || 0,
-    attendant: conv.meta?.assignee?.name,
+    attendant: assigneeName,
     labels: conv.labels || [],
-    assigneeId: conv.meta?.assignee?.id,
+    assigneeId: Number.isFinite(assigneeId) ? assigneeId : undefined,
     createdAt: getISO(conv.created_at) || timestamp,
     updatedAt: getISO(conv.updated_at) || timestamp,
   };
@@ -140,11 +155,15 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     finalContent = translateSystemMessage(finalContent);
   }
 
+  // Extrair nome do agente que enviou (message_type 1 = outgoing)
+  const senderName = (msg.message_type === 1 && msg.sender?.name) ? msg.sender.name : undefined;
+
   return {
     id: msg.id.toString(),
     chatId: msg.conversation_id.toString(),
     content: finalContent,
     sender: finalSender,
+    senderName,
     type,
     media,
     timestamp: new Date(msg.created_at * 1000).toISOString(),
@@ -193,10 +212,18 @@ export function useChats() {
           }
         }).then(res => res.json().catch(() => []));
 
-        const [response, encerrados, escalados] = await Promise.race([
-          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch]),
+        const usersFetch = fetch(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
+          headers: {
+            'apikey': anonKey,
+            'Authorization': `Bearer ${anonKey}`,
+            'Content-Type': 'application/json'
+          }
+        }).then(res => res.json().catch(() => []));
+
+        const [response, encerrados, escalados, users] = await Promise.race([
+          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch, usersFetch]),
           timeoutPromise
-        ]) as [any, any[], any[]];
+        ]) as [any, any[], any[], any[]];
 
         // console.log('✅ Resposta Fetch Raw resolvida!');
 
@@ -214,8 +241,20 @@ export function useChats() {
           return [];
         }
 
+        const usersByChatwootId = new Map(
+          (users || [])
+            .filter((user: any) => user?.chatwoot_id)
+            .map((user: any) => [String(user.chatwoot_id), user])
+        );
+
         const mapeados = conversations.map(conv => {
           const mappedChat = mapChatwootToChat(conv);
+          const assignedUser = mappedChat.assigneeId ? usersByChatwootId.get(String(mappedChat.assigneeId)) : null;
+
+          if (assignedUser) {
+            mappedChat.attendant = mappedChat.attendant || assignedUser.full_name || undefined;
+            mappedChat.attendantArea = formatUserArea(assignedUser.area);
+          }
 
           // Injetar resumo da IA quando a conversa estiver concluída
           if (encerrados && encerrados.length > 0) {
@@ -278,31 +317,36 @@ export function useSendMessage() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: SendMessagePayload) => {
-      // 1. Enviar a mensagem (via n8n/API principal)
-      // Nota: o messagesAPI.send já faz internamente o fetch para o endpoint de envio
+    mutationFn: async (data: { chatId: string; content: string; labels?: string[]; operatorChatwootId?: number | string; currentAssigneeId?: number }) => {
+      // 1. Enviar a mensagem
       const response = await chatwootAPI.sendMessage(Number(data.chatId), data.content);
 
-      // 2. Gerenciamento de etiquetas (se necessário)
-      const hasNeedsHuman = data.labels?.some(l => l.toLowerCase() === 'precisa_atendimento');
+      // 2. Auto-atribuir operador se conversa não tem assignee
+      const numericOperatorId = Number(data.operatorChatwootId);
+      const shouldAutoAssign = !data.currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
 
-      if (hasNeedsHuman) {
-        console.log('🔄 Detectada necessidade de intervenção humana. Limpando etiquetas...');
-        // Filtra 'precisa_atendimento' e garante 'agente-off'
-        const baseLabels = data.labels || [];
-        const filteredLabels = baseLabels.filter(l => l.toLowerCase() !== 'precisa_atendimento');
+      if (shouldAutoAssign) {
+        try {
+          await chatwootAPI.assignAgent(Number(data.chatId), numericOperatorId);
+          console.log('✅ Operador auto-atribuído à conversa:', data.chatId);
+        } catch (err) {
+          console.error('❌ Erro ao auto-atribuir operador:', err);
+        }
+      }
 
-        // Adiciona agente-off se não existir
+      // 3. Gerenciamento de etiquetas
+      const labels = data.labels || [];
+      const hasNeedsHuman = labels.some(l => l.toLowerCase() === 'precisa_atendimento');
+
+      if (hasNeedsHuman || shouldAutoAssign) {
+        const filteredLabels = labels.filter(l => l.toLowerCase() !== 'precisa_atendimento');
         if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {
           filteredLabels.push('agente-off');
         }
-
         try {
           await chatwootAPI.addLabel(Number(data.chatId), filteredLabels);
-          console.log('✅ Etiquetas atualizadas com sucesso: agente-off adicionada, precisa_atendimento removida');
         } catch (labelError) {
           console.error('❌ Erro ao atualizar etiquetas no Chatwoot:', labelError);
-          // Não falha a mutação inteira se apenas a etiqueta falhar
         }
       }
 
@@ -379,7 +423,7 @@ export function useTakeOverChat() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
+    mutationFn: async ({ id, labels, attendantId }: { id: string; labels: string[]; attendantId?: string | number | null }) => {
       // Remove etiqueta de intervenção humana
       const filteredLabels = (labels || []).filter(l =>
         l.toLowerCase() !== 'precisa_atendimento'
@@ -390,7 +434,12 @@ export function useTakeOverChat() {
         filteredLabels.push('agente-off');
       }
 
-      return chatwootAPI.addLabel(Number(id), filteredLabels);
+      await chatwootAPI.addLabel(Number(id), filteredLabels);
+
+      const numericAttendantId = Number(attendantId);
+      if (Number.isFinite(numericAttendantId) && numericAttendantId > 0) {
+        await chatwootAPI.assignAgent(Number(id), numericAttendantId);
+      }
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
@@ -430,8 +479,27 @@ export function useSendAttachment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ chatId, file, content = '' }: { chatId: string; file: File; content?: string }) => {
+    mutationFn: async ({ chatId, file, content = '', operatorChatwootId, currentAssigneeId, labels }: { chatId: string; file: File; content?: string; operatorChatwootId?: number | string; currentAssigneeId?: number; labels?: string[] }) => {
       const response = await chatwootAPI.sendAttachment(Number(chatId), file, content);
+
+      // Auto-atribuir operador se conversa não tem assignee
+      const numericOperatorId = Number(operatorChatwootId);
+      const shouldAutoAssign = !currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
+
+      if (shouldAutoAssign) {
+        try {
+          await chatwootAPI.assignAgent(Number(chatId), numericOperatorId);
+          const currentLabels = labels || [];
+          const filteredLabels = currentLabels.filter(l => l.toLowerCase() !== 'precisa_atendimento');
+          if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {
+            filteredLabels.push('agente-off');
+          }
+          await chatwootAPI.addLabel(Number(chatId), filteredLabels);
+        } catch (err) {
+          console.error('❌ Erro ao auto-atribuir operador no envio de anexo:', err);
+        }
+      }
+
       return response;
     },
     onSuccess: (_, variables) => {

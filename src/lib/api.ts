@@ -97,6 +97,7 @@ export interface Chat {
   time?: string;
   unread?: number;
   attendant?: string;
+  attendantArea?: string;
   createdAt?: string;
   updatedAt?: string;
   labels?: string[];
@@ -109,6 +110,7 @@ export interface Message {
   chatId: string;
   content?: string;
   sender: 'user' | 'agent' | 'activity';
+  senderName?: string;
   type?: 'text' | 'document' | 'audio' | 'image' | 'video';
   media?: {
     url: string;

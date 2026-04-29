@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  accessToken: string | null;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -110,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       handled = true;
+      setAccessToken(session?.access_token ?? null);
       if (session?.user) {
         await updateUser(session.user, session.access_token);
       } else {
@@ -153,6 +156,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data?.user) {
         console.log('✅ Login bem-sucedido, atualizando usuário...');
+        if (data.session?.access_token) {
+          setAccessToken(data.session.access_token);
+        }
         // Atualizar usuário (não esperar, pois já define loading como false)
         updateUser(data.user, data.session?.access_token);
         console.log('🚀 Redirecionando para /dashboard');
@@ -199,6 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try { localStorage.removeItem(`userProfile_${user.id}`); } catch (_) {}
       }
       setUser(null);
+      setAccessToken(null);
       await supabase.auth.signOut();
     } catch (error) {
       console.error('Erro ao fazer logout:', error);
@@ -250,6 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = {
     user,
     loading,
+    accessToken,
     signIn,
     signUp,
     signOut,
