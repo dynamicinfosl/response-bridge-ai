@@ -36,7 +36,11 @@ import {
   Video,
   Paperclip,
   Image as ImageIcon,
-  UserRound
+  UserRound,
+  Zap,
+  Plus,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -54,10 +58,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { consultaDoc, consultaNome } from '@/lib/mk-api';
 import type { MKClienteDoc } from '@/lib/mk-api';
 import { useClienteResumo } from '@/hooks/useMK';
 import { ClientSummaryPanel } from '@/components/atendimentos/ClientSummaryPanel';
+import { useCreateQuickReply, useDeleteQuickReply, useQuickReplies, useUpdateQuickReply, type QuickReply } from '@/hooks/useQuickReplies';
+import { logAuditAction } from '@/lib/audit';
 const WhatsAppAudioPlayer = ({ url }: { url: string }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -172,6 +179,9 @@ const Atendimentos = () => {
   const [showAudioRecorder, setShowAudioRecorder] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [showQuickReplyModal, setShowQuickReplyModal] = useState(false);
+  const [editingQuickReply, setEditingQuickReply] = useState<QuickReply | null>(null);
+  const [quickReplyForm, setQuickReplyForm] = useState({ title: '', shortcut: '', content: '' });
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [sectorFilter, setSectorFilter] = useState<string>('all');
   const [chatsToShow, setChatsToShow] = useState<number>(20); // Quantidade inicial de chats a mostrar
@@ -350,6 +360,10 @@ const Atendimentos = () => {
   })();
 
   const { user } = useAuth();
+  const { data: quickReplies = [] } = useQuickReplies(user?.id);
+  const createQuickReplyMutation = useCreateQuickReply();
+  const updateQuickReplyMutation = useUpdateQuickReply();
+  const deleteQuickReplyMutation = useDeleteQuickReply();
   
   // Controle de visualização de mensagens para chats fechados ou com intervenção
   const [viewMessagesForClosedChat, setViewMessagesForClosedChat] = useState<Record<string, boolean>>({});
@@ -1140,6 +1154,99 @@ const Atendimentos = () => {
 
   const selectedChatData = chats.find(chat => chat.id === selectedChat);
 
+  const normalizeQuickReplyShortcut = (value: string) =>
+    value.trim().replace(/^\/+/, '').toLowerCase().replace(/\s+/g, '-');
+
+  const resolveQuickReplyVariables = (content: string) => {
+    const areaLabel = user?.area
+      ? user.area.charAt(0).toUpperCase() + user.area.slice(1)
+      : '';
+
+    return content
+      .replace(/\[nome\]/gi, user?.name || '')
+      .replace(/\[cliente\]/gi, selectedChatData?.client || selectedChatData?.phone || '')
+      .replace(/\[telefone\]/gi, selectedChatData?.clientPhone || selectedChatData?.phone || '')
+      .replace(/\[area\]/gi, areaLabel);
+  };
+
+  const quickReplySearch = messageText.startsWith('/') ? normalizeQuickReplyShortcut(messageText) : '';
+  const showQuickReplySuggestions = messageText.startsWith('/') && quickReplies.length > 0;
+  const filteredQuickReplies = showQuickReplySuggestions
+    ? quickReplies.filter(reply => {
+      const search = quickReplySearch;
+      if (!search) return true;
+      return reply.shortcut.includes(search) || reply.title.toLowerCase().includes(search);
+    }).slice(0, 6)
+    : [];
+
+  const resetQuickReplyForm = () => {
+    setEditingQuickReply(null);
+    setQuickReplyForm({ title: '', shortcut: '', content: '' });
+  };
+
+  const handleSelectQuickReply = (reply: QuickReply) => {
+    setMessageText(resolveQuickReplyVariables(reply.content));
+  };
+
+  const handleEditQuickReply = (reply: QuickReply) => {
+    setEditingQuickReply(reply);
+    setQuickReplyForm({
+      title: reply.title,
+      shortcut: reply.shortcut,
+      content: reply.content,
+    });
+  };
+
+  const handleSaveQuickReply = async () => {
+    if (!user?.id) return;
+
+    const title = quickReplyForm.title.trim();
+    const shortcut = normalizeQuickReplyShortcut(quickReplyForm.shortcut);
+    const content = quickReplyForm.content.trim();
+
+    if (!title || !shortcut || !content) {
+      toast.error('Preencha título, atalho e mensagem');
+      return;
+    }
+
+    try {
+      if (editingQuickReply) {
+        await updateQuickReplyMutation.mutateAsync({
+          id: editingQuickReply.id,
+          user_id: user.id,
+          title,
+          shortcut,
+          content,
+        });
+        toast.success('Mensagem pré-pronta atualizada');
+      } else {
+        await createQuickReplyMutation.mutateAsync({
+          user_id: user.id,
+          title,
+          shortcut,
+          content,
+        });
+        toast.success('Mensagem pré-pronta cadastrada');
+      }
+      resetQuickReplyForm();
+    } catch (error: any) {
+      const isDuplicate = String(error?.message || '').toLowerCase().includes('duplicate');
+      toast.error(isDuplicate ? 'Você já tem uma mensagem com esse atalho' : 'Erro ao salvar mensagem pré-pronta');
+    }
+  };
+
+  const handleDeleteQuickReply = async (reply: QuickReply) => {
+    if (!user?.id) return;
+
+    try {
+      await deleteQuickReplyMutation.mutateAsync({ id: reply.id, userId: user.id });
+      if (editingQuickReply?.id === reply.id) resetQuickReplyForm();
+      toast.success('Mensagem pré-pronta removida');
+    } catch {
+      toast.error('Erro ao remover mensagem pré-pronta');
+    }
+  };
+
   // Filtrar chats por permissão de setor, status e busca
   const filteredChats = chats.filter(chat => {
     // 1. REGRA DE VISIBILIDADE (Privacidade de Setor)
@@ -1608,7 +1715,7 @@ const Atendimentos = () => {
 
                                 {/* Vencimento de Contrato */}
                                 {soonestExpiringMKHeader && (
-                                  <Badge variant={soonestExpiringMKHeader.diffDays < 0 ? "destructive" : "warning"} className={cn(
+                                  <Badge variant={soonestExpiringMKHeader.diffDays < 0 ? "destructive" : "outline"} className={cn(
                                     "px-1 py-0 text-[10px] border-none font-bold animate-in fade-in slide-in-from-left-2 duration-300",
                                     soonestExpiringMKHeader.diffDays >= 0 ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : ""
                                   )}>
@@ -2378,7 +2485,40 @@ const Atendimentos = () => {
                             if (e.target) e.target.value = '';
                           }}
                         />
-                        <div className="flex-1 bg-white rounded-lg">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 p-0 rounded-full flex-shrink-0 text-[#54656f] hover:bg-[#d1d7db]"
+                          onClick={() => setShowQuickReplyModal(true)}
+                          title="Mensagens pré-prontas"
+                        >
+                          <Zap className="w-5 h-5" />
+                        </Button>
+                        <div className="flex-1 bg-white rounded-lg relative">
+                          {showQuickReplySuggestions && (
+                            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-lg border border-border shadow-xl overflow-hidden z-30 max-h-72 overflow-y-auto">
+                              {filteredQuickReplies.length > 0 ? (
+                                filteredQuickReplies.map(reply => (
+                                  <button
+                                    key={reply.id}
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 hover:bg-muted/60 border-b border-border/50 last:border-b-0"
+                                    onClick={() => handleSelectQuickReply(reply)}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-sm font-semibold truncate">{reply.title}</span>
+                                      <span className="text-[11px] text-primary font-mono bg-primary/10 px-1.5 py-0.5 rounded">/{reply.shortcut}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground truncate mt-0.5">{reply.content}</p>
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="px-3 py-3 text-sm text-muted-foreground">
+                                  Nenhuma mensagem encontrada para `{messageText}`
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <Input
                             placeholder="Digite uma mensagem"
                             value={messageText}
@@ -2449,6 +2589,107 @@ const Atendimentos = () => {
             />
           </>
         )}
+
+        <Dialog open={showQuickReplyModal} onOpenChange={(open) => {
+          setShowQuickReplyModal(open);
+          if (!open) resetQuickReplyForm();
+        }}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-primary" />
+                Mensagens pré-prontas
+              </DialogTitle>
+              <DialogDescription>
+                Cadastre mensagens pessoais e use no chat digitando `/` no campo de mensagem.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-4 md:grid-cols-[1fr_1.1fr]">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Suas mensagens</Label>
+                  <Button variant="outline" size="sm" onClick={resetQuickReplyForm}>
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Nova
+                  </Button>
+                </div>
+                <div className="border rounded-lg max-h-80 overflow-y-auto">
+                  {quickReplies.length > 0 ? (
+                    quickReplies.map(reply => (
+                      <div key={reply.id} className="p-3 border-b last:border-b-0 hover:bg-muted/40">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold truncate">{reply.title}</p>
+                            <p className="text-[11px] text-primary font-mono">/{reply.shortcut}</p>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditQuickReply(reply)}>
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteQuickReply(reply)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{reply.content}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 text-sm text-muted-foreground text-center">
+                      Nenhuma mensagem cadastrada ainda.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Título</Label>
+                  <Input
+                    value={quickReplyForm.title}
+                    onChange={(e) => setQuickReplyForm(prev => ({ ...prev, title: e.target.value }))}
+                    placeholder="Ex: Saudação inicial"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Atalho</Label>
+                  <Input
+                    value={quickReplyForm.shortcut}
+                    onChange={(e) => setQuickReplyForm(prev => ({ ...prev, shortcut: e.target.value }))}
+                    placeholder="Ex: inicio"
+                  />
+                  <p className="text-[11px] text-muted-foreground">Use no chat como `/inicio`.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Mensagem</Label>
+                  <Textarea
+                    value={quickReplyForm.content}
+                    onChange={(e) => setQuickReplyForm(prev => ({ ...prev, content: e.target.value }))}
+                    placeholder="Olá, me chamo [nome] e vou dar continuidade ao seu atendimento."
+                    className="min-h-32"
+                  />
+                </div>
+                <div className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">
+                  Variáveis: <span className="font-mono text-foreground">[nome]</span>, <span className="font-mono text-foreground">[cliente]</span>, <span className="font-mono text-foreground">[telefone]</span>, <span className="font-mono text-foreground">[area]</span>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowQuickReplyModal(false)}>
+                Fechar
+              </Button>
+              <Button
+                onClick={handleSaveQuickReply}
+                disabled={createQuickReplyMutation.isPending || updateQuickReplyMutation.isPending}
+              >
+                {(createQuickReplyMutation.isPending || updateQuickReplyMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {editingQuickReply ? 'Atualizar' : 'Cadastrar'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Dialog Buscar Cliente MK */}
         <Dialog open={showBuscarClienteMK} onOpenChange={setShowBuscarClienteMK}>
