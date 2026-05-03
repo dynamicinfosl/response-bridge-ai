@@ -199,70 +199,101 @@ export function useChats() {
     queryKey: ['chats'],
     queryFn: async () => {
       try {
-        // console.log('🔄 Buscando chats (Chatwoot) e resumos (Supabase)...');
-
         // Timeout para evitar travamentos silenciosos de rede
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout de 10s atingido nas requisições do painel.')), 10000)
+          setTimeout(() => reject(new Error('Timeout de 20s atingido nas requisições do painel.')), 20000)
         );
 
-        // Criando requests via fetch direto para evitar problemas de Promise de bibliotecas
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-        const chatwootUrl = `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}/conversations?status=all`;
+        const chatwootBaseUrl = `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}`;
+        const chatwootHeaders = {
+          'api_access_token': import.meta.env.VITE_CHATWOOT_API_TOKEN as string,
+          'Content-Type': 'application/json'
+        };
+        const supabaseHeaders = {
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json'
+        };
 
+        // ---------- Paginação completa do Chatwoot (últimas 24h) ----------
+        const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
+        const MAX_PAGES = 10;
 
-        const chatwootFetch = fetch(chatwootUrl, {
-          headers: {
-            'api_access_token': import.meta.env.VITE_CHATWOOT_API_TOKEN as string,
-            'Content-Type': 'application/json'
+        const fetchAllChatwootConversations = async (): Promise<any[]> => {
+          let allConversations: any[] = [];
+          for (let page = 1; page <= MAX_PAGES; page++) {
+            const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
+            const res = await fetch(url, { headers: chatwootHeaders });
+            const json = await res.json();
+
+            let pageConversations: any[] = [];
+            if (Array.isArray(json)) {
+              pageConversations = json;
+            } else if (json && typeof json === 'object') {
+              pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
+            }
+
+            if (!Array.isArray(pageConversations) || pageConversations.length === 0) break;
+
+            allConversations = [...allConversations, ...pageConversations];
+
+            // Verificar se a conversa mais antiga desta página é > 24h
+            const oldest = pageConversations[pageConversations.length - 1];
+            const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
+            if (oldestUpdated) {
+              const oldestTime = typeof oldestUpdated === 'number'
+                ? oldestUpdated * 1000
+                : new Date(oldestUpdated).getTime();
+              if (oldestTime < cutoff24h) break;
+            }
+
+            // Se retornou menos que uma página completa (25), não há mais páginas
+            if (pageConversations.length < 25) break;
           }
-        }).then(res => res.json());
+          return allConversations;
+        };
+
+        // ---------- Buscar tudo em paralelo ----------
+        const chatwootFetch = fetchAllChatwootConversations();
 
         const supabaseFetch = fetch(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo`, {
-          headers: {
-            'apikey': anonKey,
-            'Authorization': `Bearer ${anonKey}`,
-            'Content-Type': 'application/json'
-          }
+          headers: supabaseHeaders
         }).then(res => res.json().catch(() => []));
 
         const escaladosFetch = fetch(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo`, {
-          headers: {
-            'apikey': anonKey,
-            'Authorization': `Bearer ${anonKey}`,
-            'Content-Type': 'application/json'
-          }
+          headers: supabaseHeaders
         }).then(res => res.json().catch(() => []));
 
         const usersFetch = fetch(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
-          headers: {
-            'apikey': anonKey,
-            'Authorization': `Bearer ${anonKey}`,
-            'Content-Type': 'application/json'
-          }
+          headers: supabaseHeaders
         }).then(res => res.json().catch(() => []));
 
-        const [response, encerrados, escalados, users] = await Promise.race([
-          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch, usersFetch]),
+        // Fetch dos dados de monitoramento (tempo de resposta)
+        const monitorFetch = fetch(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
+          headers: supabaseHeaders
+        }).then(res => res.json().catch(() => []));
+
+        const [conversations, encerrados, escalados, users, monitorData] = await Promise.race([
+          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch, usersFetch, monitorFetch]),
           timeoutPromise
-        ]) as [any, any[], any[], any[]];
-
-        // console.log('✅ Resposta Fetch Raw resolvida!');
-
-        // Chatwoot retorna { data: { payload: [...] } } via proxy/vite
-        let conversations: any[] = [];
-        if (Array.isArray(response)) {
-          conversations = response;
-        } else if (response && typeof response === 'object') {
-          const anyResponse = response as any;
-          conversations = anyResponse.data?.payload || anyResponse.payload || (Array.isArray(anyResponse.data) ? anyResponse.data : []);
-        }
+        ]) as [any[], any[], any[], any[], any[]];
 
         if (!Array.isArray(conversations)) {
-          console.error('❌ Chatwoot data is not an array:', response);
+          console.error('❌ Chatwoot data is not an array:', conversations);
           return [];
         }
+
+        // Filtrar conversas concluídas > 24h (manter abertas independente da idade)
+        const filteredConversations = conversations.filter(conv => {
+          const status = conv.status;
+          if (status === 'open' || status === 'pending') return true; // Sempre mostra abertas
+          const updatedAt = conv.last_activity_at || conv.updated_at || conv.created_at;
+          if (!updatedAt) return true;
+          const updatedTime = typeof updatedAt === 'number' ? updatedAt * 1000 : new Date(updatedAt).getTime();
+          return updatedTime >= cutoff24h;
+        });
 
         const usersByChatwootId = new Map(
           (users || [])
@@ -270,7 +301,14 @@ export function useChats() {
             .map((user: any) => [String(user.chatwoot_id), user])
         );
 
-        const mapeados = conversations.map(conv => {
+        // Montar mapa de monitoramento por conversation_id
+        const monitorMap = new Map(
+          (monitorData || [])
+            .filter((m: any) => m?.conversation_id)
+            .map((m: any) => [String(m.conversation_id), m])
+        );
+
+        const mapeados = filteredConversations.map(conv => {
           const mappedChat = mapChatwootToChat(conv);
           const assignedUser = mappedChat.assigneeId ? usersByChatwootId.get(String(mappedChat.assigneeId)) : null;
 
@@ -281,7 +319,7 @@ export function useChats() {
 
           // Injetar resumo da IA quando a conversa estiver concluída
           if (encerrados && encerrados.length > 0) {
-            const enc = encerrados.find((e: any) => e.id_conversa_chatwoot === mappedChat.id);
+            const enc = encerrados.find((e: any) => String(e.id_conversa_chatwoot) === String(mappedChat.id));
             if (enc && enc.mini_resumo) {
               if (mappedChat.status === 'concluido') {
                 mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
@@ -291,20 +329,27 @@ export function useChats() {
 
           // Injetar resumo de escalonamento para o popup
           if (escalados && escalados.length > 0) {
-            const esc = escalados.find((e: any) => e.id_conversa_chatwoot === mappedChat.id);
+            const esc = escalados.find((e: any) => String(e.id_conversa_chatwoot) === String(mappedChat.id));
             if (esc && esc.mini_resumo && mappedChat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento')) {
               mappedChat.escalationSummary = esc.mini_resumo;
             }
           }
 
+          // Enriquecer com dados de monitoramento (tempo de resposta)
+          const monitor = monitorMap.get(mappedChat.id);
+          if (monitor) {
+            mappedChat.waitingSince = monitor.waiting_since || undefined;
+            mappedChat.waitingMinutes = monitor.waiting_minutes || 0;
+            mappedChat.statusAlerta = monitor.status_alerta || 'normal';
+            mappedChat.atendenteTipo = monitor.atendente_tipo || 'nenhum';
+          }
+
           return mappedChat;
         });
 
-        // console.log('📊 Total de chats mapeados:', mapeados.length);
         return mapeados;
       } catch (err) {
         console.error('🚨 ERRO FATAL no queryFn do useChats:', err);
-        // Em vez de throw err (que causa loading infinito e quebra UI caso falhe), retorna fallback.
         return [];
       }
     },
