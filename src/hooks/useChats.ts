@@ -15,6 +15,36 @@ const formatUserArea = (area?: string | null) => {
   return area;
 };
 
+const fetchJsonWithTimeout = async (url: string, init: RequestInit = {}, timeoutMs = 8000) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const safeFetchArray = async (url: string, init: RequestInit = {}, timeoutMs = 8000): Promise<any[]> => {
+  try {
+    const data = await fetchJsonWithTimeout(url, init, timeoutMs);
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error(`❌ Erro ao buscar ${url}:`, error);
+    return [];
+  }
+};
+
 // Helper para traduzir mensagens internas do sistema sem expor o conceito de "etiquetas"
 const translateSystemMessage = (content: string): string => {
   if (!content) return '';
@@ -199,11 +229,6 @@ export function useChats() {
     queryKey: ['chats'],
     queryFn: async () => {
       try {
-        // Timeout para evitar travamentos silenciosos de rede
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout de 20s atingido nas requisições do painel.')), 20000)
-        );
-
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
         const chatwootBaseUrl = `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}`;
@@ -220,13 +245,24 @@ export function useChats() {
         // ---------- Paginação completa do Chatwoot (últimas 24h) ----------
         const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
         const MAX_PAGES = 10;
+        const chatwootStartedAt = Date.now();
 
         const fetchAllChatwootConversations = async (): Promise<any[]> => {
           let allConversations: any[] = [];
           for (let page = 1; page <= MAX_PAGES; page++) {
+            if (Date.now() - chatwootStartedAt > 12000) {
+              break;
+            }
+
             const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
-            const res = await fetch(url, { headers: chatwootHeaders });
-            const json = await res.json();
+            let json: any;
+
+            try {
+              json = await fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 6000);
+            } catch (error) {
+              console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, error);
+              break;
+            }
 
             let pageConversations: any[] = [];
             if (Array.isArray(json)) {
@@ -258,26 +294,29 @@ export function useChats() {
         // ---------- Buscar tudo em paralelo ----------
         const chatwootFetch = fetchAllChatwootConversations();
 
-        const supabaseFetch = fetch(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo`, {
+        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo`, {
           headers: supabaseHeaders
-        }).then(res => res.json().catch(() => []));
+        }, 6000);
 
-        const escaladosFetch = fetch(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo`, {
+        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo`, {
           headers: supabaseHeaders
-        }).then(res => res.json().catch(() => []));
+        }, 6000);
 
-        const usersFetch = fetch(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
+        const usersFetch = safeFetchArray(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
           headers: supabaseHeaders
-        }).then(res => res.json().catch(() => []));
+        }, 6000);
 
         // Fetch dos dados de monitoramento (tempo de resposta)
-        const monitorFetch = fetch(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
+        const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
           headers: supabaseHeaders
-        }).then(res => res.json().catch(() => []));
+        }, 6000);
 
-        const [conversations, encerrados, escalados, users, monitorData] = await Promise.race([
-          Promise.all([chatwootFetch, supabaseFetch, escaladosFetch, usersFetch, monitorFetch]),
-          timeoutPromise
+        const [conversations, encerrados, escalados, users, monitorData] = await Promise.all([
+          chatwootFetch,
+          supabaseFetch,
+          escaladosFetch,
+          usersFetch,
+          monitorFetch,
         ]) as [any[], any[], any[], any[], any[]];
 
         if (!Array.isArray(conversations)) {
@@ -353,8 +392,8 @@ export function useChats() {
         return [];
       }
     },
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
@@ -451,9 +490,30 @@ export function useSendMessage() {
 
       return response;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['messages', variables.chatId] });
       queryClient.invalidateQueries({ queryKey: ['chats'] });
+
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        if (supabaseUrl && anonKey) {
+          await fetch(`${supabaseUrl}/rest/v1/conversas_monitor?conversation_id=eq.${variables.chatId}`, {
+            method: 'PATCH',
+            headers: {
+              'apikey': anonKey,
+              'Authorization': `Bearer ${anonKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              status_alerta: 'normal',
+              waiting_minutes: 0,
+              waiting_since: null,
+              updated_at: new Date().toISOString()
+            })
+          });
+        }
+      } catch (e) { console.error(e); }
     },
   });
 }
@@ -615,9 +675,30 @@ export function useSendAttachment() {
 
       return response;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['messages', variables.chatId] });
       queryClient.invalidateQueries({ queryKey: ['chats'] });
+
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        if (supabaseUrl && anonKey) {
+          await fetch(`${supabaseUrl}/rest/v1/conversas_monitor?conversation_id=eq.${variables.chatId}`, {
+            method: 'PATCH',
+            headers: {
+              'apikey': anonKey,
+              'Authorization': `Bearer ${anonKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              status_alerta: 'normal',
+              waiting_minutes: 0,
+              waiting_since: null,
+              updated_at: new Date().toISOString()
+            })
+          });
+        }
+      } catch (e) { console.error(e); }
     },
   });
 }
