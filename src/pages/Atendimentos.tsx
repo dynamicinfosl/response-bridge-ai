@@ -40,7 +40,9 @@ import {
   Zap,
   Plus,
   Pencil,
-  Trash2
+  Trash2,
+  Timer,
+  AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -188,6 +190,7 @@ const Atendimentos = () => {
   const [searchQuery, setSearchQuery] = useState<string>(''); // Busca de conversas
   const [showScrollButton, setShowScrollButton] = useState(false); // Mostrar botão de scroll
   const [newMessageCount, setNewMessageCount] = useState(0); // Contador de novas mensagens
+  const [localRepliedChats, setLocalRepliedChats] = useState<Record<string, number>>({}); // Armazena chats respondidos localmente
   const [localHumanAttendants, setLocalHumanAttendants] = useState<Record<string, { name?: string; area?: string }>>(() => {
     try {
       const saved = localStorage.getItem('localHumanAttendants');
@@ -1094,6 +1097,8 @@ const Atendimentos = () => {
                 [String(response.id)]: user.name,
               }));
             }
+            // Adicionar ao estado local para remover a tarja imediatamente
+            setLocalRepliedChats(prev => ({ ...prev, [selectedChat]: Date.now() }));
           },
         }
       );
@@ -1305,9 +1310,37 @@ const Atendimentos = () => {
     return true;
   });
 
+  // Ordenar por prioridade de tempo de espera (crítico > alerta > normal)
+  const sortedChats = [...filteredChats].sort((a, b) => {
+    const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
+    
+    // Override local se respondido recentemente (menos de 3 min)
+    const isAReplied = localRepliedChats[a.id] && (Date.now() - localRepliedChats[a.id] < 180000);
+    const isBReplied = localRepliedChats[b.id] && (Date.now() - localRepliedChats[b.id] < 180000);
+    
+    const statusA = isAReplied ? 'normal' : (a.statusAlerta || 'normal');
+    const statusB = isBReplied ? 'normal' : (b.statusAlerta || 'normal');
+    
+    const prioA = alertaPriority[statusA] ?? 2;
+    const prioB = alertaPriority[statusB] ?? 2;
+
+    // Primeiro: ordenar por prioridade de alerta
+    if (prioA !== prioB) return prioA - prioB;
+
+    // Dentro da mesma prioridade de alerta: quem espera mais aparece primeiro
+    if (prioA < 2 && a.waitingMinutes && b.waitingMinutes) {
+      return (b.waitingMinutes || 0) - (a.waitingMinutes || 0);
+    }
+
+    // Para conversas normais: mais recente primeiro (updatedAt desc)
+    const timeA = new Date(a.updatedAt || a.time || 0).getTime();
+    const timeB = new Date(b.updatedAt || b.time || 0).getTime();
+    return timeB - timeA;
+  });
+
   // Paginar chats: mostrar apenas os primeiros X chats
-  const displayedChats = filteredChats.slice(0, chatsToShow);
-  const hasMoreChats = filteredChats.length > chatsToShow;
+  const displayedChats = sortedChats.slice(0, chatsToShow);
+  const hasMoreChats = sortedChats.length > chatsToShow;
 
   // Função para carregar mais chats
   const loadMoreChats = () => {
@@ -1456,6 +1489,11 @@ const Atendimentos = () => {
                       const needsHuman = chat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
                       const status = getStatusBadge(chat.status || (chat as any).statusP, needsHuman);
                       const displayUnread = Math.max(chat.unread || 0, localUnread[chat.id] || 0);
+                      const isRecentlyReplied = localRepliedChats[chat.id] && (Date.now() - localRepliedChats[chat.id] < 180000);
+                      const finalStatusAlerta = isRecentlyReplied ? 'normal' : chat.statusAlerta;
+                      const isAlerta = finalStatusAlerta === 'alerta';
+                      const isCritico = finalStatusAlerta === 'critico';
+                      const hasResponseAlert = isAlerta || isCritico;
                       return (
                         <div
                           key={chat.id}
@@ -1464,9 +1502,13 @@ const Atendimentos = () => {
                             "p-4 border-b border-border cursor-pointer transition-colors hover:bg-muted/50",
                             selectedChat === chat.id
                               ? "bg-primary-muted border-l-4 border-l-primary"
-                              : displayUnread > 0
-                                ? "bg-muted/30 border-l-4 border-l-primary/50"
-                                : ""
+                              : isCritico
+                                ? "bg-red-50/80 border-l-4 border-l-red-500"
+                                : isAlerta
+                                  ? "bg-amber-50/60 border-l-4 border-l-amber-400"
+                                  : displayUnread > 0
+                                    ? "bg-muted/30 border-l-4 border-l-primary/50"
+                                    : ""
                           )}
                         >
                           <div className="flex items-center gap-3">
@@ -1550,6 +1592,29 @@ const Atendimentos = () => {
                                   </div>
                                 );
                               })()}
+                              {/* Alerta de tempo sem resposta */}
+                              {hasResponseAlert && chat.waitingMinutes && chat.waitingMinutes >= 10 && (
+                                <div className={cn(
+                                  "flex items-center gap-1.5 mt-1.5 px-2 py-1 rounded-md text-[11px] font-bold",
+                                  isCritico
+                                    ? "bg-red-100 text-red-700 border border-red-200 animate-pulse"
+                                    : "bg-amber-100 text-amber-700 border border-amber-200"
+                                )}>
+                                  <Timer className="w-3.5 h-3.5 flex-shrink-0" />
+                                  <span>{chat.waitingMinutes}min sem resposta</span>
+                                  {chat.atendenteTipo === 'ia' && (
+                                    <span className="flex items-center gap-0.5 ml-1">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      IA não respondeu
+                                    </span>
+                                  )}
+                                  {chat.atendenteTipo === 'humano' && (
+                                    <span className="ml-1 font-normal opacity-80">
+                                      Operador pendente
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                               <div className="flex items-center justify-between mt-2">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0 rounded border border-border/50">
@@ -1602,7 +1667,7 @@ const Atendimentos = () => {
                           className="w-full"
                           onClick={loadMoreChats}
                         >
-                          Ver mais ({filteredChats.length - chatsToShow} restantes)
+                          Ver mais ({sortedChats.length - chatsToShow} restantes)
                         </Button>
                       </div>
                     )}

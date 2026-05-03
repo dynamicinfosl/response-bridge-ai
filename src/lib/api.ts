@@ -103,6 +103,10 @@ export interface Chat {
   labels?: string[];
   assigneeId?: number;
   escalationSummary?: string;
+  waitingSince?: string;
+  waitingMinutes?: number;
+  statusAlerta?: 'normal' | 'alerta' | 'critico';
+  atendenteTipo?: 'ia' | 'humano' | 'nenhum';
 }
 
 export interface Message {
