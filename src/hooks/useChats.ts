@@ -256,71 +256,27 @@ export function useChats() {
       try {
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-        const chatwootBaseUrl = `/api/chatwoot/api/v1/accounts/${import.meta.env.VITE_CHATWOOT_ACCOUNT_ID}`;
-        const chatwootHeaders = {
-          'api_access_token': import.meta.env.VITE_CHATWOOT_API_TOKEN as string,
-          'Content-Type': 'application/json'
-        };
         const supabaseHeaders = {
           'apikey': anonKey,
           'Authorization': `Bearer ${anonKey}`,
           'Content-Type': 'application/json'
         };
 
-        // ---------- Paginação completa do Chatwoot (últimas 24h) ----------
-        const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
-        const MAX_PAGES = 10;
-        const chatwootStartedAt = Date.now();
-
-        const fetchAllChatwootConversations = async (): Promise<any[]> => {
-          let allConversations: any[] = [];
-          for (let page = 1; page <= MAX_PAGES; page++) {
-            if (Date.now() - chatwootStartedAt > 15000) {
-              break;
-            }
-
-            const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
-            let json: any;
-
-            try {
-              json = await fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 10000);
-            } catch (error) {
-              console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, error);
-              // Se a primeira página falhar, lança erro para preservar dados antigos na UI
-              if (page === 1) throw error;
-              break;
-            }
-
-            let pageConversations: any[] = [];
-            if (Array.isArray(json)) {
-              pageConversations = json;
-            } else if (json && typeof json === 'object') {
-              pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
-            }
-
-            if (!Array.isArray(pageConversations) || pageConversations.length === 0) break;
-
-            allConversations = [...allConversations, ...pageConversations];
-
-            // Verificar se a conversa mais antiga desta página é > 24h
-            const oldest = pageConversations[pageConversations.length - 1];
-            const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
-            if (oldestUpdated) {
-              const oldestTime = typeof oldestUpdated === 'number'
-                ? oldestUpdated * 1000
-                : new Date(oldestUpdated).getTime();
-              if (oldestTime < cutoff24h) break;
-            }
-
-            // Se retornou menos que uma página completa (25), não há mais páginas
-            if (pageConversations.length < 25) break;
+        // ---------- Buscar conversas via Edge Function (rápido, com cache) ----------
+        const edgeFunctionUrl = `${supabaseUrl}/functions/v1/chatwoot-sync`;
+        const conversationsFetch = fetchJsonWithTimeout(edgeFunctionUrl, {
+          headers: { 'Content-Type': 'application/json' }
+        }, 15000).then((json: any) => {
+          const convs = json?.conversations;
+          if (!Array.isArray(convs)) {
+            console.error('❌ Edge Function retornou dados inválidos:', json);
+            throw new Error('Edge Function returned invalid data');
           }
-          return allConversations;
-        };
+          console.log(`✅ ${convs.length} conversas carregadas (source: ${json.source})`);
+          return convs;
+        });
 
-        // ---------- Buscar Chatwoot + dados auxiliares em paralelo ----------
-        const chatwootFetch = fetchAllChatwootConversations();
-
+        // ---------- Buscar dados auxiliares do Supabase em paralelo ----------
         const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=500`, {
           headers: supabaseHeaders
         }, 6000);
@@ -331,41 +287,34 @@ export function useChats() {
 
         const usersFetch = getCachedUsers(supabaseUrl, anonKey);
 
-        // Fetch dos dados de monitoramento (tempo de resposta)
         const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
           headers: supabaseHeaders
         }, 6000);
 
         const [conversations, encerrados, escalados, users, monitorData] = await Promise.all([
-          chatwootFetch,
+          conversationsFetch,
           supabaseFetch,
           escaladosFetch,
           usersFetch,
           monitorFetch,
         ]) as [any[], any[], any[], any[], any[]];
 
-        if (!Array.isArray(conversations)) {
-          console.error('❌ Chatwoot data is not an array:', conversations);
-          return [];
-        }
-
-        // Filtrar conversas concluídas > 24h (manter abertas independente da idade) e conversas fantasmas (sem mensagem)
+        // Filtrar conversas fantasmas (sem mensagem)
+        const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
         const filteredConversations = conversations.filter(conv => {
-          // Filtro de conversa "fantasma" (criada pela API sem mensagem real)
           const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
           const hasContent = !!lastMsg?.content || !!(lastMsg?.attachments?.length);
           
           if (!hasContent) {
             const createdAt = conv.created_at;
             const createdTime = typeof createdAt === 'number' ? createdAt * 1000 : new Date(createdAt).getTime();
-            // Se está há mais de 2 minutos sem nenhuma mensagem, é bug da API e deve ser ocultada
             if (Date.now() - createdTime > 2 * 60 * 1000) {
               return false;
             }
           }
 
           const status = conv.status;
-          if (status === 'open' || status === 'pending') return true; // Sempre mostra abertas com conteúdo
+          if (status === 'open' || status === 'pending') return true;
           const updatedAt = conv.last_activity_at || conv.updated_at || conv.created_at;
           if (!updatedAt) return true;
           const updatedTime = typeof updatedAt === 'number' ? updatedAt * 1000 : new Date(updatedAt).getTime();
@@ -378,7 +327,6 @@ export function useChats() {
             .map((user: any) => [String(user.chatwoot_id), user])
         );
 
-        // Montar mapa de monitoramento por conversation_id
         const monitorMap = new Map(
           (monitorData || [])
             .filter((m: any) => m?.conversation_id)
@@ -394,7 +342,6 @@ export function useChats() {
             mappedChat.attendantArea = formatUserArea(assignedUser.area);
           }
 
-          // Injetar resumo da IA quando a conversa estiver concluída
           if (encerrados && encerrados.length > 0) {
             const enc = encerrados.find((e: any) => String(e.id_conversa_chatwoot) === String(mappedChat.id));
             if (enc && enc.mini_resumo) {
@@ -404,7 +351,6 @@ export function useChats() {
             }
           }
 
-          // Injetar resumo de escalonamento para o popup
           if (escalados && escalados.length > 0) {
             const esc = escalados.find((e: any) => String(e.id_conversa_chatwoot) === String(mappedChat.id));
             if (esc && esc.mini_resumo && mappedChat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento')) {
@@ -412,7 +358,6 @@ export function useChats() {
             }
           }
 
-          // Enriquecer com dados de monitoramento (tempo de resposta)
           const monitor = monitorMap.get(mappedChat.id);
           if (monitor) {
             mappedChat.waitingSince = monitor.waiting_since || undefined;
@@ -431,14 +376,14 @@ export function useChats() {
         return mapeados;
       } catch (err) {
         console.error('🚨 ERRO no queryFn do useChats:', err);
-        throw err; // Lança para o React Query manter dados anteriores (placeholderData)
+        throw err;
       }
     },
-    refetchInterval: 12000,
-    staleTime: 8000,
+    refetchInterval: 8000,
+    staleTime: 5000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
-    placeholderData: (prev: any) => prev, // Mantém dados antigos na tela enquanto re-busca
+    placeholderData: (prev: any) => prev,
     refetchOnWindowFocus: false,
   });
 }
