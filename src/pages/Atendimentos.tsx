@@ -1504,13 +1504,15 @@ const Atendimentos = () => {
                             "p-4 border-b border-border cursor-pointer transition-colors hover:bg-muted/50",
                             selectedChat === chat.id
                               ? "bg-primary-muted border-l-4 border-l-primary"
-                              : isCritico
-                                ? "bg-red-50/80 border-l-4 border-l-red-500"
-                                : isAlerta
-                                  ? "bg-amber-50/60 border-l-4 border-l-amber-400"
-                                  : displayUnread > 0
-                                    ? "bg-muted/30 border-l-4 border-l-primary/50"
-                                    : ""
+                              : (needsHuman && chat.status !== 'resolved' && chat.status !== 'concluido')
+                                ? "bg-red-50 border-l-4 border-l-red-500 animate-pulse"
+                                : (isCritico && chat.status !== 'resolved' && chat.status !== 'concluido')
+                                  ? "bg-red-50/80 border-l-4 border-l-red-500"
+                                  : (isAlerta && chat.status !== 'resolved' && chat.status !== 'concluido')
+                                    ? "bg-amber-50/60 border-l-4 border-l-amber-400"
+                                    : displayUnread > 0
+                                      ? "bg-muted/30 border-l-4 border-l-primary/50"
+                                      : ""
                           )}
                         >
                           <div className="flex items-center gap-3">
@@ -1520,7 +1522,7 @@ const Atendimentos = () => {
                                   {getInitials(formatClientName(chat))}
                                 </AvatarFallback>
                               </Avatar>
-                              {needsHuman && (
+                              {needsHuman && chat.status !== 'resolved' && chat.status !== 'concluido' && (
                                 <span className="absolute -top-1 -right-1 flex h-4 w-4">
                                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                   <span className="relative inline-flex rounded-full h-4 w-4 bg-red-500 border-2 border-white"></span>
@@ -1594,29 +1596,33 @@ const Atendimentos = () => {
                                   </div>
                                 );
                               })()}
-                              {/* Alerta de tempo sem resposta */}
-                              {hasResponseAlert && chat.waitingMinutes && chat.waitingMinutes >= 10 && (
-                                <div className={cn(
-                                  "flex items-center gap-1.5 mt-1.5 px-2 py-1 rounded-md text-[11px] font-bold",
-                                  isCritico
-                                    ? "bg-red-100 text-red-700 border border-red-200 animate-pulse"
-                                    : "bg-amber-100 text-amber-700 border border-amber-200"
-                                )}>
-                                  <Timer className="w-3.5 h-3.5 flex-shrink-0" />
-                                  <span>{chat.waitingMinutes}min sem resposta</span>
-                                  {chat.atendenteTipo === 'ia' && (
-                                    <span className="flex items-center gap-0.5 ml-1">
-                                      <AlertTriangle className="w-3 h-3" />
-                                      IA não respondeu
-                                    </span>
-                                  )}
-                                  {chat.atendenteTipo === 'humano' && (
-                                    <span className="ml-1 font-normal opacity-80">
-                                      Operador pendente
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                              {/* Alertas de SLA e Intervenção */}
+                              <div className="flex flex-col gap-1.5 mt-1.5">
+                                {hasResponseAlert && chat.status !== 'resolved' && chat.status !== 'concluido' && chat.waitingMinutes && chat.waitingMinutes >= 10 && (
+                                  <div className={cn(
+                                    "flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-bold",
+                                    isCritico
+                                      ? "bg-red-100 text-red-700 border border-red-200 animate-pulse"
+                                      : "bg-amber-100 text-amber-700 border border-amber-200"
+                                  )}>
+                                    <Timer className="w-3.5 h-3.5 flex-shrink-0" />
+                                    <span>{chat.waitingMinutes}min sem resposta</span>
+                                    {chat.atendenteTipo === 'ia' && (
+                                      <span className="flex items-center gap-0.5 ml-1">
+                                        <AlertTriangle className="w-3 h-3" />
+                                        IA não respondeu
+                                      </span>
+                                    )}
+                                    {chat.atendenteTipo === 'humano' && (
+                                      <span className="ml-1 font-normal opacity-80">
+                                        Operador pendente
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+
+                              </div>
                               <div className="flex items-center justify-between mt-2">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0 rounded border border-border/50">
@@ -1634,6 +1640,15 @@ const Atendimentos = () => {
                                       </Badge>
                                     );
                                   })()}
+                                  {needsHuman && chat.status !== 'resolved' && chat.status !== 'concluido' && (
+                                    <Badge 
+                                      variant="destructive" 
+                                      className="px-1.5 py-0 font-bold uppercase text-[9px] bg-red-500 hover:bg-red-600 text-white border-none animate-pulse flex items-center gap-1 shadow-sm"
+                                    >
+                                      <AlertCircle className="w-2.5 h-2.5" />
+                                      Intervenção {chat.waitingMinutes !== undefined && `(${chat.waitingMinutes}m)`}
+                                    </Badge>
+                                  )}
                                   {chat.status !== 'concluido' && (
                                     <div className="flex flex-wrap gap-2 mt-1">
                                       {formatAttendantDisplay(chat) ? (
