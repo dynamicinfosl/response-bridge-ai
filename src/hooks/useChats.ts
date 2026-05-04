@@ -45,6 +45,27 @@ const safeFetchArray = async (url: string, init: RequestInit = {}, timeoutMs = 8
   }
 };
 
+// Cache global para usuários para não sobrecarregar o Supabase a cada 3s/10s
+let cachedUsers: any[] | null = null;
+let cachedUsersTime = 0;
+
+const getCachedUsers = async (supabaseUrl: string, anonKey: string): Promise<any[]> => {
+  const now = Date.now();
+  if (cachedUsers && now - cachedUsersTime < 5 * 60 * 1000) {
+    return cachedUsers;
+  }
+  try {
+    const data = await safeFetchArray(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
+      headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' }
+    }, 6000);
+    cachedUsers = data;
+    cachedUsersTime = now;
+    return data;
+  } catch (e) {
+    return cachedUsers || [];
+  }
+};
+
 // Helper para traduzir mensagens internas do sistema sem expor o conceito de "etiquetas"
 const translateSystemMessage = (content: string): string => {
   if (!content) return '';
@@ -253,62 +274,96 @@ export function useChats() {
 
         const fetchAllChatwootConversations = async (): Promise<any[]> => {
           let allConversations: any[] = [];
-          for (let page = 1; page <= MAX_PAGES; page++) {
-            if (Date.now() - chatwootStartedAt > 12000) {
+          let stopFetching = false;
+          
+          for (let batch = 0; batch < Math.ceil(MAX_PAGES / 3); batch++) {
+            if (Date.now() - chatwootStartedAt > 12000 || stopFetching) {
               break;
             }
 
-            const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
-            let json: any;
-
-            try {
-              json = await fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 6000);
-            } catch (error) {
-              console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, error);
-              break;
+            const promises = [];
+            for (let i = 1; i <= 3; i++) {
+              const page = batch * 3 + i;
+              if (page > MAX_PAGES) break;
+              
+              const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
+              promises.push(
+                fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 6000)
+                  .catch(err => {
+                    console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, err);
+                    if (page === 1) {
+                      throw err; // Se a página 1 falhar, aborta tudo para não limpar a UI
+                    }
+                    return null;
+                  })
+              );
             }
 
-            let pageConversations: any[] = [];
-            if (Array.isArray(json)) {
-              pageConversations = json;
-            } else if (json && typeof json === 'object') {
-              pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
+            const results = await Promise.all(promises);
+
+            for (const json of results) {
+              if (!json) {
+                stopFetching = true;
+                continue;
+              }
+
+              let pageConversations: any[] = [];
+              if (Array.isArray(json)) {
+                pageConversations = json;
+              } else if (json && typeof json === 'object') {
+                pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
+              }
+
+              if (!Array.isArray(pageConversations) || pageConversations.length === 0) {
+                stopFetching = true;
+                break;
+              }
+
+              allConversations = [...allConversations, ...pageConversations];
+
+              const oldest = pageConversations[pageConversations.length - 1];
+              const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
+              if (oldestUpdated) {
+                const oldestTime = typeof oldestUpdated === 'number'
+                  ? oldestUpdated * 1000
+                  : new Date(oldestUpdated).getTime();
+                if (oldestTime < cutoff24h) {
+                  stopFetching = true;
+                }
+              }
+
+              if (pageConversations.length < 25) {
+                stopFetching = true;
+              }
             }
-
-            if (!Array.isArray(pageConversations) || pageConversations.length === 0) break;
-
-            allConversations = [...allConversations, ...pageConversations];
-
-            // Verificar se a conversa mais antiga desta página é > 24h
-            const oldest = pageConversations[pageConversations.length - 1];
-            const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
-            if (oldestUpdated) {
-              const oldestTime = typeof oldestUpdated === 'number'
-                ? oldestUpdated * 1000
-                : new Date(oldestUpdated).getTime();
-              if (oldestTime < cutoff24h) break;
-            }
-
-            // Se retornou menos que uma página completa (25), não há mais páginas
-            if (pageConversations.length < 25) break;
           }
-          return allConversations;
+          
+          allConversations.sort((a, b) => {
+            const timeA = typeof a.last_activity_at === 'number' ? a.last_activity_at * 1000 : new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
+            const timeB = typeof b.last_activity_at === 'number' ? b.last_activity_at * 1000 : new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
+            return timeB - timeA;
+          });
+          
+          const uniqueIds = new Set();
+          return allConversations.filter(c => {
+            if (uniqueIds.has(c.id)) return false;
+            uniqueIds.add(c.id);
+            return true;
+          });
         };
 
         // ---------- Buscar tudo em paralelo ----------
         const chatwootFetch = fetchAllChatwootConversations();
 
-        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo`, {
+        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=1000`, {
           headers: supabaseHeaders
         }, 6000);
 
-        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo`, {
+        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=1000`, {
           headers: supabaseHeaders
         }, 6000);
 
-        const usersFetch = safeFetchArray(`${supabaseUrl}/rest/v1/users?select=full_name,area,chatwoot_id&chatwoot_id=not.is.null`, {
-          headers: supabaseHeaders
-        }, 6000);
+        const usersFetch = getCachedUsers(supabaseUrl, anonKey);
 
         // Fetch dos dados de monitoramento (tempo de resposta)
         const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
@@ -403,10 +458,14 @@ export function useChats() {
           return mappedChat;
         });
 
+        if (mapeados.length === 0 && conversations.length > 0) {
+           console.warn('⚠️ Mapeamento resultou em 0 chats, mas havia conversas brutas.');
+        }
+
         return mapeados;
       } catch (err) {
         console.error('🚨 ERRO FATAL no queryFn do useChats:', err);
-        return [];
+        throw err; // IMPORTANTE: lançar o erro para o React Query não substituir os dados por []
       }
     },
     refetchInterval: 10000,
@@ -425,9 +484,7 @@ export function useMessages(chatId: string | null) {
 
       const [response, usersResp] = await Promise.all([
         chatwootAPI.getMessages(Number(chatId)),
-        fetch(`${supabaseUrl}/rest/v1/users?select=full_name,chatwoot_id&chatwoot_id=not.is.null`, {
-          headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}` }
-        }).then(r => r.json().catch(() => [])),
+        getCachedUsers(supabaseUrl, anonKey),
       ]);
 
       // Set de chatwoot_ids de humanos para diferenciar do bot
