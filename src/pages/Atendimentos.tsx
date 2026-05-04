@@ -267,6 +267,7 @@ const Atendimentos = () => {
         operatorChatwootId: user?.chatwoot_id,
         currentAssigneeId: selectedChatData?.assigneeId,
         labels: selectedChatData?.labels,
+        operatorName: user?.name,
       },
       {
         onSuccess: (response: any) => {
@@ -1090,6 +1091,7 @@ const Atendimentos = () => {
           labels: selectedChatData?.labels,
           operatorChatwootId: user?.chatwoot_id,
           currentAssigneeId: selectedChatData?.assigneeId,
+          operatorName: user?.name,
         },
         {
           onSuccess: (response: any) => {
@@ -2156,13 +2158,25 @@ const Atendimentos = () => {
                         const isAgent = message.sender === 'agent' || message.sender === 'ai';
 
                         // Nome do operador que enviou: Chatwoot (fonte verdade) > override local (só fallback para msgs recém-enviadas sem senderName ainda)
-                        const displaySenderName = message.senderName || messageSenderOverrides[message.id] || undefined;
+                        let displaySenderName = message.senderName || messageSenderOverrides[message.id] || undefined;
+                        if (displaySenderName === 'Gabriel Souza' || displaySenderName === 'gabrieldesouza100' || displaySenderName === 'Gabriel') {
+                          displaySenderName = selectedChatData?.assigneeName || 'Assistente Virtual';
+                        }
+                        
                         const prevMessage = index > 0 ? messages[index - 1] : null;
-                        const prevDisplaySenderName = prevMessage ? ((prevMessage as any).senderName || messageSenderOverrides[prevMessage.id]) : undefined;
+                        let prevDisplaySenderName = prevMessage ? ((prevMessage as any).senderName || messageSenderOverrides[prevMessage.id]) : undefined;
+                        if (prevDisplaySenderName === 'Gabriel Souza' || prevDisplaySenderName === 'gabrieldesouza100' || prevDisplaySenderName === 'Gabriel') {
+                          prevDisplaySenderName = selectedChatData?.assigneeName || 'Assistente Virtual';
+                        }
+                        if (prevDisplaySenderName === 'Assistente Virtual') {
+                          prevDisplaySenderName = undefined;
+                        }
 
-                        // É humano quando tem senderName (agente real, não IA)
-                        const isHuman = isAgent && !!displaySenderName;
-
+                        // É humano quando tem senderName (agente real, não IA) e não é assistente virtual
+                        const isHuman = isAgent && !!displaySenderName && displaySenderName !== 'Assistente Virtual';
+                        if (!isHuman && displaySenderName === 'Assistente Virtual') {
+                          displaySenderName = undefined; // Não exibir nome de assistente virtual no card verde
+                        }
                         // Verifica se é o mesmo remetente da mensagem anterior (para agrupar)
                         // Para agentes, também agrupa pelo nome (diferente operador = não agrupa)
                         const isSameSender = prevMessage && (
@@ -2224,10 +2238,17 @@ const Atendimentos = () => {
                         const isLastMessage = index === messages.length - 1;
 
                         if (message.sender === 'activity') {
+                          let activityContent = message.content || '';
+                          if (activityContent.includes('Gabriel Souza') || activityContent.includes('gabrieldesouza100')) {
+                            // Se a conversa tem um responsável humano, atribuímos a ação a ele. Se não, foi o sistema.
+                            const operatorNameToShow = selectedChatData?.assigneeName || 'Sistema';
+                            activityContent = activityContent.replace(/Gabriel Souza|gabrieldesouza100/g, operatorNameToShow);
+                          }
+
                           return (
                             <div key={message.id} ref={isLastMessage ? lastMessageRef : null} className="flex justify-center my-3">
                               <div className="bg-[#f0f4f8]/80 text-[#8696a0] text-[11px] font-medium italic px-4 py-1.5 rounded-full text-center shadow-sm max-w-[85%] border border-[#e1e8ed]/60">
-                                {message.content}
+                                {activityContent}
                               </div>
                             </div>
                           );
@@ -2546,6 +2567,7 @@ const Atendimentos = () => {
                                   operatorChatwootId: user?.chatwoot_id,
                                   currentAssigneeId: selectedChatData?.assigneeId,
                                   labels: selectedChatData?.labels,
+                                  operatorName: user?.name,
                                 },
                                 {
                                   onSuccess: (response: any) => {

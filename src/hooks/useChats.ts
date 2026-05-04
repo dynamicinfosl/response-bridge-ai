@@ -448,7 +448,9 @@ export function useMessages(chatId: string | null) {
         // Sobrescreve senderName: só mostra se o sender.id for um humano real do Supabase
         if (msg.message_type === 1 && msg.sender?.id) {
           const sid = String(msg.sender.id);
-          if (humanChatwootIds.has(sid)) {
+          if (msg.content_attributes && msg.content_attributes.sender_name) {
+            mapped.senderName = msg.content_attributes.sender_name;
+          } else if (humanChatwootIds.has(sid)) {
             mapped.senderName = humanNameById.get(sid) || msg.sender.name;
           } else {
             mapped.senderName = undefined; // bot — não exibir nome
@@ -468,9 +470,11 @@ export function useSendMessage() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { chatId: string; content: string; labels?: string[]; operatorChatwootId?: number | string; currentAssigneeId?: number }) => {
+    mutationFn: async (data: { chatId: string; content: string; labels?: string[]; operatorChatwootId?: number | string; currentAssigneeId?: number; operatorName?: string }) => {
       // 1. Enviar a mensagem
-      const response = await chatwootAPI.sendMessage(Number(data.chatId), data.content);
+      const contentAttributes = data.operatorName ? { sender_name: data.operatorName } : undefined;
+      const response = await chatwootAPI.sendMessage(Number(data.chatId), data.content, false, contentAttributes);
+
 
       // 2. Auto-atribuir operador se conversa não tem assignee
       const numericOperatorId = Number(data.operatorChatwootId);
@@ -665,8 +669,9 @@ export function useSendAttachment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ chatId, file, content = '', operatorChatwootId, currentAssigneeId, labels }: { chatId: string; file: File; content?: string; operatorChatwootId?: number | string; currentAssigneeId?: number; labels?: string[] }) => {
-      const response = await chatwootAPI.sendAttachment(Number(chatId), file, content);
+    mutationFn: async ({ chatId, file, content = '', operatorChatwootId, currentAssigneeId, labels, operatorName }: { chatId: string; file: File; content?: string; operatorChatwootId?: number | string; currentAssigneeId?: number; labels?: string[]; operatorName?: string }) => {
+      const contentAttributes = operatorName ? { sender_name: operatorName } : undefined;
+      const response = await chatwootAPI.sendAttachment(Number(chatId), file, content, contentAttributes);
 
       // Auto-atribuir operador se conversa não tem assignee
       const numericOperatorId = Number(operatorChatwootId);

@@ -164,21 +164,25 @@ export const chatwootAPI = {
       method: 'POST',
     }),
 
-  sendMessage: (conversationId: number, content: string, private_msg: boolean = false) =>
+  sendMessage: (conversationId: number, content: string, private_msg: boolean = false, content_attributes?: any) =>
     chatwootFetch<ChatwootMessage>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         content,
         message_type: 'outgoing',
         private: private_msg,
+        content_attributes,
       }),
     }),
 
-  sendAttachment: (conversationId: number, file: File, content: string = '') => {
+  sendAttachment: (conversationId: number, file: File, content: string = '', content_attributes?: any) => {
     const formData = new FormData();
     formData.append('content', content);
     formData.append('attachments[]', file, file.name || 'document.pdf');
     formData.append('message_type', 'outgoing');
+    if (content_attributes) {
+      formData.append('content_attributes', JSON.stringify(content_attributes));
+    }
 
     return chatwootFetch<ChatwootMessage>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
