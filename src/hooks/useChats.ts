@@ -79,8 +79,12 @@ const translateSystemMessage = (content: string): string => {
     return 'Atendimento transferido de operador';
   }
 
-  if (lower.includes('marcado como resolvido') || lower.includes('marked as resolved')) {
+  if (lower.includes('marcad') && lower.includes('como resolvid') || lower.includes('marked as resolved')) {
     return 'Atendimento finalizado com sucesso';
+  }
+
+  if (lower.includes('reaberta') || lower.includes('reabriu') || lower.includes('reopened')) {
+    return 'O sistema reabriu a conversa devido a uma nova mensagem recebida.';
   }
 
   // Se não reconhecer o padrão, retorna o texto original para não perder informações vitais (como resumos de IA)
@@ -443,23 +447,99 @@ export function useMessages(chatId: string | null) {
         return [];
       }
 
-      return messages.map((msg: any) => {
+      // ID do admin cujo token de API é usado para TODAS as mensagens (bot + humanos)
+      const ADMIN_SENDER_ID = '1';
+
+      // Ordena cronologicamente para construir a timeline
+      const sortedRaw = [...messages].sort((a: any, b: any) => a.created_at - b.created_at);
+
+      // ===== TIMELINE: detectar períodos de intervenção humana =====
+      // Quando "agente-off" é adicionado, o bot para e um humano assume.
+      // Quando "agente-off" é removido, o bot volta.
+      // A atividade "Atribuído a X por Y" nos dá o NOME do operador humano.
+      type InterventionPeriod = { start: number; end: number; operatorName: string };
+      const interventionPeriods: InterventionPeriod[] = [];
+      let currentIntervention: { start: number; operatorName: string } | null = null;
+
+      for (const msg of sortedRaw) {
+        if (msg.message_type !== 2 || msg.private) continue;
+        const content = (msg.content || '').toLowerCase();
+
+        // Marca início da intervenção humana
+        if (content.includes('adicionou agente-off') || content.includes('adicionou precisa_atendimento')) {
+          if (!currentIntervention) {
+            currentIntervention = { start: msg.created_at, operatorName: '' };
+          }
+        }
+
+        // Captura o nome do operador atribuído
+        if (msg.content && /atribuído a/i.test(msg.content)) {
+          const matchBy = msg.content.match(/atribuído a (.+?) por/i);
+          const matchSimple = msg.content.match(/atribuído a (.+)/i);
+          const operatorName = (matchBy?.[1] || matchSimple?.[1] || '').trim();
+          if (operatorName && currentIntervention) {
+            currentIntervention.operatorName = operatorName;
+          } else if (operatorName && !currentIntervention) {
+            // Atribuição pode vir antes do agente-off em alguns fluxos
+            currentIntervention = { start: msg.created_at, operatorName };
+          }
+        }
+
+        // Marca fim da intervenção humana (bot reativado)
+        if (content.includes('removeu agente-off') || content.includes('inteligente reativado')) {
+          if (currentIntervention) {
+            interventionPeriods.push({ ...currentIntervention, end: msg.created_at });
+            currentIntervention = null;
+          }
+        }
+      }
+      // Se ainda em intervenção, estende até o infinito
+      if (currentIntervention) {
+        interventionPeriods.push({ ...currentIntervention, end: Infinity });
+      }
+
+      // Função auxiliar: verifica se um timestamp está dentro de um período de intervenção
+      const getInterventionOperator = (timestamp: number): string | undefined => {
+        for (const period of interventionPeriods) {
+          if (timestamp >= period.start && timestamp <= period.end && period.operatorName) {
+            return period.operatorName;
+          }
+        }
+        return undefined;
+      };
+
+      return sortedRaw.map((msg: any) => {
         const mapped = mapChatwootToMessage(msg);
-        // Sobrescreve senderName: só mostra se o sender.id for um humano real do Supabase
+
         if (msg.message_type === 1 && msg.sender?.id) {
           const sid = String(msg.sender.id);
-          if (msg.content_attributes && msg.content_attributes.sender_name) {
+
+          // 1. content_attributes.sender_name (mensagens enviadas pelo nosso painel com nome explícito)
+          if (msg.content_attributes?.sender_name) {
             mapped.senderName = msg.content_attributes.sender_name;
-          } else if (humanChatwootIds.has(sid)) {
+          }
+          // 2. sender.id NÃO é o admin → foi enviado direto do Chatwoot por um operador real
+          else if (sid !== ADMIN_SENDER_ID && humanChatwootIds.has(sid)) {
             mapped.senderName = humanNameById.get(sid) || msg.sender.name;
-          } else {
-            mapped.senderName = undefined; // bot — não exibir nome
+          }
+          // 3. sender.id É o admin → verificar timeline de intervenção
+          else if (sid === ADMIN_SENDER_ID) {
+            const operator = getInterventionOperator(msg.created_at);
+            if (operator) {
+              // Está dentro de um período de intervenção humana → usar nome do operador
+              mapped.senderName = operator;
+            } else {
+              // Fora de intervenção → é o bot/IA, sem nome
+              mapped.senderName = undefined;
+            }
+          }
+          // 4. Fallback: sem nome (bot)
+          else {
+            mapped.senderName = undefined;
           }
         }
         return mapped;
-      }).sort((a: any, b: any) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
+      });
     },
     enabled: !!chatId,
     refetchInterval: 3000,
