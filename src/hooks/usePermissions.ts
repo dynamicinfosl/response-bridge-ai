@@ -48,9 +48,9 @@ export function usePermissions() {
       return targetUser.role !== 'master' && targetUser.role !== 'admin';
     }
 
-    // Encarregado pode gerenciar apenas seus subordinados
+    // Encarregado pode gerenciar user e outros encarregados
     if (user.role === 'encarregado') {
-      return targetUser.supervisor_id === user.id;
+      return targetUser.role === 'user' || targetUser.role === 'encarregado' || targetUser.id === user.id;
     }
 
     // User não pode gerenciar ninguém
@@ -80,7 +80,7 @@ export function usePermissions() {
       return role === 'encarregado' || role === 'user';
     }
     if (user.role === 'encarregado') {
-      return role === 'user';
+      return role === 'user' || role === 'encarregado';
     }
 
     return false;
@@ -99,7 +99,7 @@ export function usePermissions() {
    * Master e Admin podem ver todos
    */
   const canViewAllUsers = (): boolean => {
-    return user?.role === 'master' || user?.role === 'admin';
+    return user?.role === 'master' || user?.role === 'admin' || user?.role === 'encarregado';
   };
 
 

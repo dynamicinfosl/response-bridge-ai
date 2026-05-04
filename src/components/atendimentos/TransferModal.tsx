@@ -19,6 +19,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { chatwootAPI, type ChatwootAgent } from '@/lib/chatwoot';
 import { useTransferChat } from '@/hooks/useChats';
+import { logAuditAction } from '@/lib/audit';
 
 interface TransferModalProps {
   isOpen: boolean;

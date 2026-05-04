@@ -277,6 +277,8 @@ const Atendimentos = () => {
               [String(response.id)]: user.name,
             }));
           }
+          // Adicionar ao estado local para remover a tarja imediatamente
+          setLocalRepliedChats(prev => ({ ...prev, [selectedChat]: Date.now() }));
         },
         onError: (err) => {
           toast.error('Erro ao enviar áudio');
@@ -2539,6 +2541,8 @@ const Atendimentos = () => {
                                         [String(response.id)]: user.name,
                                       }));
                                     }
+                                    // Adicionar ao estado local para remover a tarja imediatamente
+                                    setLocalRepliedChats(prev => ({ ...prev, [selectedChat]: Date.now() }));
                                   },
                                   onError: (err) => {
                                     toast.error('Erro ao enviar anexo');

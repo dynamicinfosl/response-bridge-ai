@@ -57,6 +57,8 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { chatwootAPI } from '@/lib/chatwoot';
+import { usePermissions } from '@/hooks/usePermissions';
+import { logAuditAction } from '@/lib/audit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -139,6 +141,7 @@ export default function Colaboradores() {
     return accessToken;
   }, [accessToken]);
   const { toast } = useToast();
+  const { canManageUser, canCreateRole, canViewAllUsers } = usePermissions();
 
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [filtered, setFiltered] = useState<Colaborador[]>([]);
@@ -155,7 +158,7 @@ export default function Colaboradores() {
   const [saving, setSaving] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const isMasterOrAdmin = currentUser?.role === 'master' || currentUser?.role === 'admin';
+  const canManageUsers = currentUser?.role === 'master' || currentUser?.role === 'admin' || currentUser?.role === 'encarregado';
 
   // ── Load ────────────────────────────────────────────────────────────────────
 
@@ -353,6 +356,13 @@ export default function Colaboradores() {
         console.warn('Update após criar falhou, mas auth user foi criado. text:', txt);
       }
 
+      await logAuditAction('user_create', { 
+        email: form.email, 
+        name: form.full_name,
+        role: form.role,
+        area: form.area
+      }, 'admin', userId);
+      
       toast({ title: `Usuário criado! Senha: ${password}` });
       setCreateOpen(false);
       resetForm();
@@ -439,6 +449,13 @@ export default function Colaboradores() {
         throw new Error(errText || `HTTP ${response.status}`);
       }
 
+      await logAuditAction('user_update', { 
+        email: selected.email, 
+        name: form.full_name,
+        role: form.role,
+        area: form.area
+      }, 'admin', selected.id);
+
       toast({ title: 'Salvo com sucesso!' });
       setEditOpen(false);
       resetForm();
@@ -520,13 +537,14 @@ export default function Colaboradores() {
         throw new Error(errText || `HTTP ${response.status}`);
       }
 
-      toast({ title: 'Colaborador removido' });
-      setDeleteOpen(false);
-      setSelected(null);
       await logAuditAction('user_delete', { 
         email: selected.email, 
         name: selected.full_name 
       }, 'admin', selected.id);
+
+      toast({ title: 'Colaborador removido' });
+      setDeleteOpen(false);
+      setSelected(null);
 
       load();
     } catch (err: any) {
@@ -559,7 +577,7 @@ export default function Colaboradores() {
             <Button variant="outline" size="icon" onClick={load} disabled={loading}>
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
-            {isMasterOrAdmin && (
+            {canManageUsers && (
               <Button onClick={() => { resetForm(); setCreateOpen(true); }}>
                 <Plus className="w-4 h-4 mr-2" /> Novo Colaborador
               </Button>
@@ -685,7 +703,7 @@ export default function Colaboradores() {
                         </Badge>
                       )}
                     </div>
-                    {isMasterOrAdmin && (
+                    {canManageUser(u as any) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon" className="opacity-60 hover:opacity-100">
@@ -771,9 +789,13 @@ export default function Colaboradores() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="user">Usuário</SelectItem>
-                    <SelectItem value="encarregado">Encarregado</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    {currentUser?.role === 'master' && (
+                    {canCreateRole('encarregado') && (
+                      <SelectItem value="encarregado">Encarregado</SelectItem>
+                    )}
+                    {canCreateRole('admin') && (
+                      <SelectItem value="admin">Admin</SelectItem>
+                    )}
+                    {canCreateRole('master') && (
                       <SelectItem value="master">Master</SelectItem>
                     )}
                   </SelectContent>
@@ -864,9 +886,13 @@ export default function Colaboradores() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="user">Usuário</SelectItem>
-                    <SelectItem value="encarregado">Encarregado</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    {currentUser?.role === 'master' && (
+                    {canCreateRole('encarregado') && (
+                      <SelectItem value="encarregado">Encarregado</SelectItem>
+                    )}
+                    {canCreateRole('admin') && (
+                      <SelectItem value="admin">Admin</SelectItem>
+                    )}
+                    {canCreateRole('master') && (
                       <SelectItem value="master">Master</SelectItem>
                     )}
                   </SelectContent>

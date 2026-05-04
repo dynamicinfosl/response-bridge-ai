@@ -8,6 +8,7 @@ import { Lock, Mail, HelpCircle } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { logAuditAction } from '@/lib/audit';
 import logoImage from '../assets/Adapt-Link-Logo.png';
 
 const Login = () => {

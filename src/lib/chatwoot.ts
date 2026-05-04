@@ -32,7 +32,16 @@ async function chatwootFetch<T>(endpoint: string, options?: RequestInit): Promis
     throw new Error(`Chatwoot API Error: ${response.status} - ${error}`);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return {} as T;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+
+  return JSON.parse(text);
 }
 
 export interface ChatwootAgent {
