@@ -274,92 +274,58 @@ export function useChats() {
 
         const fetchAllChatwootConversations = async (): Promise<any[]> => {
           let allConversations: any[] = [];
-          let stopFetching = false;
-          
-          for (let batch = 0; batch < Math.ceil(MAX_PAGES / 3); batch++) {
-            if (Date.now() - chatwootStartedAt > 12000 || stopFetching) {
+          for (let page = 1; page <= MAX_PAGES; page++) {
+            if (Date.now() - chatwootStartedAt > 15000) {
               break;
             }
 
-            const promises = [];
-            for (let i = 1; i <= 3; i++) {
-              const page = batch * 3 + i;
-              if (page > MAX_PAGES) break;
-              
-              const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
-              promises.push(
-                fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 6000)
-                  .catch(err => {
-                    console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, err);
-                    if (page === 1) {
-                      throw err; // Se a página 1 falhar, aborta tudo para não limpar a UI
-                    }
-                    return null;
-                  })
-              );
+            const url = `${chatwootBaseUrl}/conversations?status=all&page=${page}`;
+            let json: any;
+
+            try {
+              json = await fetchJsonWithTimeout(url, { headers: chatwootHeaders }, 10000);
+            } catch (error) {
+              console.error(`❌ Erro ao buscar conversas do Chatwoot na página ${page}:`, error);
+              // Se a primeira página falhar, lança erro para preservar dados antigos na UI
+              if (page === 1) throw error;
+              break;
             }
 
-            const results = await Promise.all(promises);
-
-            for (const json of results) {
-              if (!json) {
-                stopFetching = true;
-                continue;
-              }
-
-              let pageConversations: any[] = [];
-              if (Array.isArray(json)) {
-                pageConversations = json;
-              } else if (json && typeof json === 'object') {
-                pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
-              }
-
-              if (!Array.isArray(pageConversations) || pageConversations.length === 0) {
-                stopFetching = true;
-                break;
-              }
-
-              allConversations = [...allConversations, ...pageConversations];
-
-              const oldest = pageConversations[pageConversations.length - 1];
-              const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
-              if (oldestUpdated) {
-                const oldestTime = typeof oldestUpdated === 'number'
-                  ? oldestUpdated * 1000
-                  : new Date(oldestUpdated).getTime();
-                if (oldestTime < cutoff24h) {
-                  stopFetching = true;
-                }
-              }
-
-              if (pageConversations.length < 25) {
-                stopFetching = true;
-              }
+            let pageConversations: any[] = [];
+            if (Array.isArray(json)) {
+              pageConversations = json;
+            } else if (json && typeof json === 'object') {
+              pageConversations = json.data?.payload || json.payload || (Array.isArray(json.data) ? json.data : []);
             }
+
+            if (!Array.isArray(pageConversations) || pageConversations.length === 0) break;
+
+            allConversations = [...allConversations, ...pageConversations];
+
+            // Verificar se a conversa mais antiga desta página é > 24h
+            const oldest = pageConversations[pageConversations.length - 1];
+            const oldestUpdated = oldest?.last_activity_at || oldest?.updated_at || oldest?.created_at;
+            if (oldestUpdated) {
+              const oldestTime = typeof oldestUpdated === 'number'
+                ? oldestUpdated * 1000
+                : new Date(oldestUpdated).getTime();
+              if (oldestTime < cutoff24h) break;
+            }
+
+            // Se retornou menos que uma página completa (25), não há mais páginas
+            if (pageConversations.length < 25) break;
           }
-          
-          allConversations.sort((a, b) => {
-            const timeA = typeof a.last_activity_at === 'number' ? a.last_activity_at * 1000 : new Date(a.last_activity_at || a.updated_at || a.created_at || 0).getTime();
-            const timeB = typeof b.last_activity_at === 'number' ? b.last_activity_at * 1000 : new Date(b.last_activity_at || b.updated_at || b.created_at || 0).getTime();
-            return timeB - timeA;
-          });
-          
-          const uniqueIds = new Set();
-          return allConversations.filter(c => {
-            if (uniqueIds.has(c.id)) return false;
-            uniqueIds.add(c.id);
-            return true;
-          });
+          return allConversations;
         };
 
-        // ---------- Buscar tudo em paralelo ----------
+        // ---------- Buscar Chatwoot + dados auxiliares em paralelo ----------
         const chatwootFetch = fetchAllChatwootConversations();
 
-        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=1000`, {
+        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=500`, {
           headers: supabaseHeaders
         }, 6000);
 
-        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=1000`, {
+        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=500`, {
           headers: supabaseHeaders
         }, 6000);
 
@@ -464,12 +430,16 @@ export function useChats() {
 
         return mapeados;
       } catch (err) {
-        console.error('🚨 ERRO FATAL no queryFn do useChats:', err);
-        throw err; // IMPORTANTE: lançar o erro para o React Query não substituir os dados por []
+        console.error('🚨 ERRO no queryFn do useChats:', err);
+        throw err; // Lança para o React Query manter dados anteriores (placeholderData)
       }
     },
-    refetchInterval: 10000,
-    staleTime: 5000,
+    refetchInterval: 12000,
+    staleTime: 8000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    placeholderData: (prev: any) => prev, // Mantém dados antigos na tela enquanto re-busca
+    refetchOnWindowFocus: false,
   });
 }
 
