@@ -324,10 +324,23 @@ export function useChats() {
           return [];
         }
 
-        // Filtrar conversas concluídas > 24h (manter abertas independente da idade)
+        // Filtrar conversas concluídas > 24h (manter abertas independente da idade) e conversas fantasmas (sem mensagem)
         const filteredConversations = conversations.filter(conv => {
+          // Filtro de conversa "fantasma" (criada pela API sem mensagem real)
+          const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
+          const hasContent = !!lastMsg?.content || !!(lastMsg?.attachments?.length);
+          
+          if (!hasContent) {
+            const createdAt = conv.created_at;
+            const createdTime = typeof createdAt === 'number' ? createdAt * 1000 : new Date(createdAt).getTime();
+            // Se está há mais de 2 minutos sem nenhuma mensagem, é bug da API e deve ser ocultada
+            if (Date.now() - createdTime > 2 * 60 * 1000) {
+              return false;
+            }
+          }
+
           const status = conv.status;
-          if (status === 'open' || status === 'pending') return true; // Sempre mostra abertas
+          if (status === 'open' || status === 'pending') return true; // Sempre mostra abertas com conteúdo
           const updatedAt = conv.last_activity_at || conv.updated_at || conv.created_at;
           if (!updatedAt) return true;
           const updatedTime = typeof updatedAt === 'number' ? updatedAt * 1000 : new Date(updatedAt).getTime();
