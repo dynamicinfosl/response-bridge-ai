@@ -708,6 +708,8 @@ export function useCloseChat() {
       // Se houver labels diferentes das removidas, mantém-as. Senão, envia array vazio (remove todas)
       await chatwootAPI.addLabel(Number(id), filteredLabels);
 
+      await chatwootAPI.unassignAgent(Number(id));
+
       return { id };
     },
     onSuccess: (_, variables) => {

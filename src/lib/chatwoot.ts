@@ -130,6 +130,12 @@ export const chatwootAPI = {
       body: JSON.stringify({ assignee_id: agentId }),
     }),
 
+  unassignAgent: (conversationId: number) =>
+    chatwootFetch(`/conversations/${conversationId}/assignments`, {
+      method: 'POST',
+      body: JSON.stringify({ assignee_id: null }),
+    }),
+
   updateStatus: (conversationId: number, status: string) =>
     chatwootFetch(`/conversations/${conversationId}/toggle_status`, {
       method: 'POST',
