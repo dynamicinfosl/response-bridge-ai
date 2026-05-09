@@ -399,10 +399,32 @@ const Atendimentos = () => {
     return sectors.length === 0;
   };
 
+  const getChatSectors = (labels: string[]) => {
+    return Array.from(new Set((labels || []).map(l => getSectorFromLabel(l)).filter(Boolean))) as string[];
+  };
+
+  const getPrimarySector = (labels: string[]) => {
+    const sectors = getChatSectors(labels);
+    if (sectors.includes('comercial')) return 'comercial';
+    if (sectors.includes('financeiro')) return 'financeiro';
+    if (sectors.includes('tecnico')) return 'tecnico';
+    return null;
+  };
+
   // Função para verificar se um chat precisa de intervenção humana
   const needsHumanIntervention = (labels: string[]) => {
     const normalizedLabels = (labels || []).map(l => normalizeText(l));
     return normalizedLabels.includes('precisa_atendimento');
+  };
+
+  const hasOutOfHoursIntervention = (labels: string[]) => {
+    const normalizedLabels = (labels || []).map(l => normalizeText(l));
+    return normalizedLabels.includes('fora_exp_intervencao');
+  };
+
+  const hasWeekendIntervention = (labels: string[]) => {
+    const normalizedLabels = (labels || []).map(l => normalizeText(l));
+    return normalizedLabels.includes('fim_semana_intervencao');
   };
 
   // Helpers de permissão por perfil
@@ -942,15 +964,15 @@ const Atendimentos = () => {
   };
 
   const getSectorInfo = (labels: string[]) => {
-    const sectors = (labels || []).map(l => getSectorFromLabel(l)).filter(Boolean) as string[];
+    const primarySector = getPrimarySector(labels);
     
-    if (sectors.includes('comercial')) {
+    if (primarySector === 'comercial') {
       return { label: 'Comercial', className: 'bg-blue-50 text-blue-600 border-blue-200' };
     }
-    if (sectors.includes('financeiro')) {
+    if (primarySector === 'financeiro') {
       return { label: 'Financeiro', className: 'bg-green-50 text-green-600 border-green-200' };
     }
-    if (sectors.includes('tecnico')) {
+    if (primarySector === 'tecnico') {
       return { label: 'Técnico', className: 'bg-orange-50 text-orange-600 border-orange-200' };
     }
     if (isTriagemChat(labels)) {
@@ -1261,7 +1283,8 @@ const Atendimentos = () => {
     // 1. REGRA DE VISIBILIDADE (Privacidade de Setor)
     const chatLabels = chat.labels || [];
     const isTriagem = isTriagemChat(chatLabels);
-    const chatSectors = chatLabels.map(l => getSectorFromLabel(l)).filter(Boolean) as string[];
+    const chatSectors = getChatSectors(chatLabels);
+    const primarySector = getPrimarySector(chatLabels);
     const hasHumanIntervention = needsHumanIntervention(chatLabels);
     const chatStatus = chat.status || (chat as any).statusP;
 
@@ -1284,6 +1307,10 @@ const Atendimentos = () => {
       if (chatStatus !== 'active' && !hasHumanIntervention) return false;
     } else if (statusFilter === 'needs_human') {
       if (!hasHumanIntervention) return false;
+    } else if (statusFilter === 'out_of_hours') {
+      if (!hasOutOfHoursIntervention(chatLabels)) return false;
+    } else if (statusFilter === 'weekend_intervention') {
+      if (!hasWeekendIntervention(chatLabels)) return false;
     } else if (statusFilter !== 'all') {
       if (chatStatus !== statusFilter) return false;
     }
@@ -1307,7 +1334,7 @@ const Atendimentos = () => {
       } else {
         const filterKey = normalizeText(sectorFilter);
         const canonicalKey = filterKey === 'tecnica' ? 'tecnico' : filterKey;
-        if (!chatSectors.includes(canonicalKey)) return false;
+        if (primarySector !== canonicalKey) return false;
       }
     }
 
@@ -1317,6 +1344,17 @@ const Atendimentos = () => {
   // Ordenar por prioridade de tempo de espera (crítico > alerta > normal)
   const sortedChats = [...filteredChats].sort((a, b) => {
     const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
+    const specialPriority = (chat: any) => {
+      const labels = chat.labels || [];
+      if (hasWeekendIntervention(labels)) return 0;
+      if (hasOutOfHoursIntervention(labels)) return 1;
+      if (needsHumanIntervention(labels)) return 2;
+      return 3;
+    };
+
+    const specialA = specialPriority(a);
+    const specialB = specialPriority(b);
+    if (specialA !== specialB) return specialA - specialB;
     
     // Override local se respondido recentemente (menos de 3 min)
     const isAReplied = localRepliedChats[a.id] && (Date.now() - localRepliedChats[a.id] < 180000);
@@ -1437,6 +1475,8 @@ const Atendimentos = () => {
                   >
                     <option value="active">Status: Em andamento</option>
                     <option value="needs_human">Necessidade de intervenção</option>
+                    <option value="out_of_hours">Intervenções fora do expediente</option>
+                    <option value="weekend_intervention">Intervenções do fim de semana</option>
                     <option value="all">Status: Todos</option>
                     <option value="pendente">Pendentes</option>
                     <option value="active">Em Andamento</option>
@@ -1491,6 +1531,8 @@ const Atendimentos = () => {
                   <>
                     {displayedChats.map((chat) => {
                       const needsHuman = chat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
+                      const outOfHoursIntervention = hasOutOfHoursIntervention(chat.labels || []);
+                      const weekendIntervention = hasWeekendIntervention(chat.labels || []);
                       const status = getStatusBadge(chat.status || (chat as any).statusP, needsHuman);
                       const displayUnread = Math.max(chat.unread || 0, localUnread[chat.id] || 0);
                       const isRecentlyReplied = localRepliedChats[chat.id] && (Date.now() - localRepliedChats[chat.id] < 180000);
@@ -1649,6 +1691,16 @@ const Atendimentos = () => {
                                     >
                                       <AlertCircle className="w-2.5 h-2.5" />
                                       Intervenção {chat.waitingMinutes !== undefined && `(${chat.waitingMinutes}m)`}
+                                    </Badge>
+                                  )}
+                                  {outOfHoursIntervention && chat.status !== 'resolved' && chat.status !== 'concluido' && (
+                                    <Badge variant="outline" className="px-1.5 py-0 font-bold uppercase text-[9px] bg-violet-50 text-violet-700 border-violet-200">
+                                      Fora do expediente
+                                    </Badge>
+                                  )}
+                                  {weekendIntervention && chat.status !== 'resolved' && chat.status !== 'concluido' && (
+                                    <Badge variant="outline" className="px-1.5 py-0 font-bold uppercase text-[9px] bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200">
+                                      Fim de semana
                                     </Badge>
                                   )}
                                   {chat.status !== 'concluido' && (

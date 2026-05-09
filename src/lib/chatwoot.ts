@@ -82,6 +82,7 @@ export interface ChatwootMessage {
   id: number;
   content: string;
   message_type: number; // 0: incoming, 1: outgoing
+  private?: boolean;
   created_at: number;
   conversation_id: number;
   attachments?: any[];

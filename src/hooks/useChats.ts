@@ -73,6 +73,8 @@ const translateSystemMessage = (content: string): string => {
 
   if (lower.includes(' adicionou ')) {
     if (lower.includes('precisa_atendimento')) return 'Intervenção humana solicitada';
+    if (lower.includes('fora_exp_intervencao')) return 'Intervenção fora do expediente sinalizada';
+    if (lower.includes('fim_semana_intervencao')) return 'Intervenção de fim de semana sinalizada';
     if (lower.includes('agente-off')) return 'Atendimento inteligente pausado';
     return 'Configuração do atendimento atualizada';
   }
@@ -607,6 +609,8 @@ export function useReactivateAI() {
     mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
       const filteredLabels = (labels || []).filter(l =>
         l.toLowerCase() !== 'precisa_atendimento' &&
+        l.toLowerCase() !== 'fora_exp_intervencao' &&
+        l.toLowerCase() !== 'fim_semana_intervencao' &&
         l.toLowerCase() !== 'agente-off'
       );
 
@@ -654,7 +658,9 @@ export function useTakeOverChat() {
     mutationFn: async ({ id, labels, attendantId }: { id: string; labels: string[]; attendantId?: string | number | null }) => {
       // Remove etiqueta de intervenção humana
       const filteredLabels = (labels || []).filter(l =>
-        l.toLowerCase() !== 'precisa_atendimento'
+        l.toLowerCase() !== 'precisa_atendimento' &&
+        l.toLowerCase() !== 'fora_exp_intervencao' &&
+        l.toLowerCase() !== 'fim_semana_intervencao'
       );
 
       // Garante que a IA fique parada enquanto o humano atende
