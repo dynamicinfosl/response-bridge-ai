@@ -27,9 +27,10 @@ interface TransferModalProps {
   clientName: string;
   chatId: string;
   currentAttendant?: string;
+  labels?: string[];
 }
 
-export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAttendant }: TransferModalProps) => {
+export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAttendant, labels = [] }: TransferModalProps) => {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [transferNote, setTransferNote] = useState('');
@@ -76,10 +77,11 @@ export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAtte
 
       // Se tiver setor selecionado, adiciona label
       if (selectedSector) {
-        const sectorName = sectors.find(s => s.id === selectedSector)?.name;
-        if (sectorName) {
-          await chatwootAPI.addLabel(Number(chatId), [sectorName]);
+        const updatedLabels = (labels || []).filter(label => label.toLowerCase() !== 'triagem');
+        if (!updatedLabels.some(label => label.toLowerCase() === selectedSector)) {
+          updatedLabels.push(selectedSector);
         }
+        await chatwootAPI.addLabel(Number(chatId), updatedLabels);
       }
 
       // Se houver nota, envia como mensagem privada (internal note)

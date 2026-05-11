@@ -137,13 +137,15 @@ const mapChatwootToChat = (conv: any): Chat => {
     }
   };
 
-  const timestamp = getISO(conv.contact_last_seen_at) ||
-    getISO(conv.updated_at) ||
-    getISO(conv.created_at) ||
-    new Date().toISOString();
-
   const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
   let lastMsgContent = lastMsg?.content || '';
+  const lastMessageAt = getISO(lastMsg?.created_at);
+  const timestamp = lastMessageAt ||
+    getISO(conv.last_activity_at) ||
+    getISO(conv.updated_at) ||
+    getISO(conv.contact_last_seen_at) ||
+    getISO(conv.created_at) ||
+    new Date().toISOString();
 
   // Prepara preview textual baseado em anexos ou mensagens de sistema
   if (lastMsg?.message_type === 2) {
@@ -179,7 +181,7 @@ const mapChatwootToChat = (conv: any): Chat => {
     labels: conv.labels || [],
     assigneeId: Number.isFinite(assigneeId) ? assigneeId : undefined,
     createdAt: getISO(conv.created_at) || timestamp,
-    updatedAt: getISO(conv.updated_at) || timestamp,
+    updatedAt: timestamp,
   };
 };
 
@@ -251,6 +253,37 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
   };
 };
 
+const isWeekendSaoPaulo = (dateValue: any) => {
+  if (!dateValue) return false;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'short',
+  }).format(date);
+  return weekday === 'Sat' || weekday === 'Sun';
+};
+
+const getCanonicalSectorLabel = (area?: string | null) => {
+  const normalized = (area || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  if (normalized === 'tecnica' || normalized === 'tecnico') return 'tecnico';
+  if (normalized === 'comercial') return 'comercial';
+  if (normalized === 'financeiro') return 'financeiro';
+  return '';
+};
+
+const hasSectorLabel = (labels: string[] = []) => {
+  return labels.some(label => {
+    const normalized = label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    return normalized === 'tecnico' ||
+      normalized === 's-tecnico' ||
+      normalized === 'comercial' ||
+      normalized === 's-comercial' ||
+      normalized === 'financeiro' ||
+      normalized === 's-financeiro';
+  });
+};
+
 export function useChats() {
   return useQuery({
     queryKey: ['chats'],
@@ -283,7 +316,7 @@ export function useChats() {
           headers: supabaseHeaders
         }, 6000);
 
-        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=500`, {
+        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,telefone,nome,mini_resumo,created_at&order=created_at.desc&limit=1000`, {
           headers: supabaseHeaders
         }, 6000);
 
@@ -301,26 +334,48 @@ export function useChats() {
           monitorFetch,
         ]) as [any[], any[], any[], any[], any[]];
 
-        // Filtrar conversas fantasmas (sem mensagem)
-        const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
+        const encerradosByConversation = new Set(
+          (encerrados || [])
+            .filter((e: any) => e?.id_conversa_chatwoot)
+            .map((e: any) => String(e.id_conversa_chatwoot))
+        );
+
+        const escaladosByConversation = new Map<string, any>();
+        (escalados || [])
+          .filter((e: any) => e?.id_conversa_chatwoot && !encerradosByConversation.has(String(e.id_conversa_chatwoot)))
+          .forEach((e: any) => {
+            const conversationId = String(e.id_conversa_chatwoot);
+            if (!escaladosByConversation.has(conversationId)) {
+              escaladosByConversation.set(conversationId, e);
+            }
+          });
+
         const filteredConversations = conversations.filter(conv => {
           const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
           const hasContent = !!lastMsg?.content || !!(lastMsg?.attachments?.length);
+          const convId = String(conv.id || conv.conversation_id || '');
+          const labels = Array.isArray(conv.labels) ? conv.labels.map((label: string) => label.toLowerCase()) : [];
+          const status = conv.status;
+          const isOpenOrPending = status === 'open' || status === 'pending';
+          const isClosed = status === 'resolved' || status === 'concluido';
+          const hasInterventionLabel = labels.some((label: string) =>
+            label === 'precisa_atendimento' ||
+            label === 'fora_exp_intervencao' ||
+            label === 'fim_semana_intervencao'
+          );
+          const hasEscalationRecord = escaladosByConversation.has(convId);
           
           if (!hasContent) {
             const createdAt = conv.created_at;
             const createdTime = typeof createdAt === 'number' ? createdAt * 1000 : new Date(createdAt).getTime();
-            if (Date.now() - createdTime > 2 * 60 * 1000) {
+            if (!hasEscalationRecord && Date.now() - createdTime > 2 * 60 * 1000) {
               return false;
             }
           }
 
-          const status = conv.status;
-          if (status === 'open' || status === 'pending') return true;
-          const updatedAt = conv.last_activity_at || conv.updated_at || conv.created_at;
-          if (!updatedAt) return true;
-          const updatedTime = typeof updatedAt === 'number' ? updatedAt * 1000 : new Date(updatedAt).getTime();
-          return updatedTime >= cutoff24h;
+          if (isClosed) return false;
+          if (isOpenOrPending) return true;
+          return hasInterventionLabel && hasEscalationRecord;
         });
 
         const usersByChatwootId = new Map(
@@ -335,13 +390,61 @@ export function useChats() {
             .map((m: any) => [String(m.conversation_id), m])
         );
 
-        const mapeados = filteredConversations.map(conv => {
+        const existingConversationIds = new Set(
+          filteredConversations.map((conv: any) => String(conv.id || conv.conversation_id || ''))
+        );
+
+        const missingEscalatedConversations = Array.from(escaladosByConversation.values())
+          .filter((esc: any) => !existingConversationIds.has(String(esc.id_conversa_chatwoot)))
+          .map((esc: any) => ({
+            id: Number(esc.id_conversa_chatwoot),
+            status: 'open',
+            contact: {
+              name: esc.nome || '',
+              phone_number: esc.telefone || ''
+            },
+            labels: ['precisa_atendimento'].concat(isWeekendSaoPaulo(esc.created_at) ? ['fim_semana_intervencao'] : []),
+            unread_count: 0,
+            created_at: esc.created_at,
+            updated_at: esc.created_at,
+            last_activity_at: esc.created_at,
+            messages: [{
+              content: esc.mini_resumo || 'Intervenção humana solicitada',
+              message_type: 2,
+              created_at: Math.floor(new Date(esc.created_at).getTime() / 1000)
+            }]
+          }));
+
+        const conversationsToMap = filteredConversations.concat(missingEscalatedConversations);
+
+        const mapeados = conversationsToMap.map(conv => {
           const mappedChat = mapChatwootToChat(conv);
           const assignedUser = mappedChat.assigneeId ? usersByChatwootId.get(String(mappedChat.assigneeId)) : null;
+          const esc = escaladosByConversation.get(String(mappedChat.id));
+          const hasHumanAssignee = Boolean(mappedChat.assigneeId);
+
+          if (esc && !hasHumanAssignee) {
+            const labelSet = new Set(mappedChat.labels || []);
+            labelSet.add('precisa_atendimento');
+            if (isWeekendSaoPaulo(esc.created_at)) labelSet.add('fim_semana_intervencao');
+            mappedChat.labels = Array.from(labelSet);
+            mappedChat.escalationSummary = esc.mini_resumo || mappedChat.escalationSummary;
+            if (mappedChat.lastMessage && mappedChat.lastMessage !== 'Intervenção humana solicitada') {
+              mappedChat.lastMessage = mappedChat.lastMessage;
+            } else if (esc.mini_resumo) {
+              mappedChat.lastMessage = `[Intervenção] ${esc.mini_resumo}`;
+            }
+          }
 
           if (assignedUser) {
             mappedChat.attendant = mappedChat.attendant || assignedUser.full_name || undefined;
             mappedChat.attendantArea = formatUserArea(assignedUser.area);
+            mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
+              const normalized = label.toLowerCase();
+              return normalized !== 'precisa_atendimento' &&
+                normalized !== 'fora_exp_intervencao' &&
+                normalized !== 'fim_semana_intervencao';
+            });
           }
 
           if (encerrados && encerrados.length > 0) {
@@ -351,12 +454,13 @@ export function useChats() {
                 mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
               }
             }
-          }
-
-          if (escalados && escalados.length > 0) {
-            const esc = escalados.find((e: any) => String(e.id_conversa_chatwoot) === String(mappedChat.id));
-            if (esc && esc.mini_resumo && mappedChat.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento')) {
-              mappedChat.escalationSummary = esc.mini_resumo;
+            if (enc) {
+              mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
+                const normalized = label.toLowerCase();
+                return normalized !== 'precisa_atendimento' &&
+                  normalized !== 'fora_exp_intervencao' &&
+                  normalized !== 'fim_semana_intervencao';
+              });
             }
           }
 
@@ -655,13 +759,21 @@ export function useTakeOverChat() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ id, labels, attendantId }: { id: string; labels: string[]; attendantId?: string | number | null }) => {
+    mutationFn: async ({ id, labels, attendantId, attendantArea }: { id: string; labels: string[]; attendantId?: string | number | null; attendantArea?: string | null }) => {
+      const hadTriagem = (labels || []).some(l => l.toLowerCase() === 'triagem');
+      const sectorLabel = getCanonicalSectorLabel(attendantArea);
+
       // Remove etiqueta de intervenção humana
       const filteredLabels = (labels || []).filter(l =>
         l.toLowerCase() !== 'precisa_atendimento' &&
         l.toLowerCase() !== 'fora_exp_intervencao' &&
-        l.toLowerCase() !== 'fim_semana_intervencao'
+        l.toLowerCase() !== 'fim_semana_intervencao' &&
+        !(hadTriagem && l.toLowerCase() === 'triagem')
       );
+
+      if (hadTriagem && sectorLabel && !filteredLabels.some(l => l.toLowerCase() === sectorLabel)) {
+        filteredLabels.push(sectorLabel);
+      }
 
       // Garante que a IA fique parada enquanto o humano atende
       if (!filteredLabels.some(l => l.toLowerCase() === 'agente-off')) {

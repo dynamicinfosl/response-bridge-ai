@@ -1287,6 +1287,7 @@ const Atendimentos = () => {
     const primarySector = getPrimarySector(chatLabels);
     const hasHumanIntervention = needsHumanIntervention(chatLabels);
     const chatStatus = chat.status || (chat as any).statusP;
+    const isClosedChat = chatStatus === 'concluido' || chatStatus === 'resolved';
 
     // Se não for admin/master, aplicamos restrição de setor/responsável
     if (!isAdminOrMaster) {
@@ -1303,13 +1304,19 @@ const Atendimentos = () => {
 
     // 2. FILTRO DE STATUS
     if (statusFilter === 'active') {
-      if (chatStatus === 'concluido' && !hasHumanIntervention) return false;
-      if (chatStatus !== 'active' && !hasHumanIntervention) return false;
+      if (isClosedChat) return false;
+      if (hasHumanIntervention) return false;
+      if (chatStatus !== 'active') return false;
     } else if (statusFilter === 'needs_human') {
+      if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
     } else if (statusFilter === 'out_of_hours') {
+      if (isClosedChat) return false;
+      if (!hasHumanIntervention) return false;
       if (!hasOutOfHoursIntervention(chatLabels)) return false;
     } else if (statusFilter === 'weekend_intervention') {
+      if (isClosedChat) return false;
+      if (!hasHumanIntervention) return false;
       if (!hasWeekendIntervention(chatLabels)) return false;
     } else if (statusFilter !== 'all') {
       if (chatStatus !== statusFilter) return false;
@@ -1345,6 +1352,7 @@ const Atendimentos = () => {
   const sortedChats = [...filteredChats].sort((a, b) => {
     const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
     const specialPriority = (chat: any) => {
+      if (!['needs_human', 'out_of_hours', 'weekend_intervention'].includes(statusFilter)) return 3;
       const labels = chat.labels || [];
       if (hasWeekendIntervention(labels)) return 0;
       if (hasOutOfHoursIntervention(labels)) return 1;
@@ -1474,12 +1482,11 @@ const Atendimentos = () => {
                     className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
                     <option value="active">Status: Em andamento</option>
-                    <option value="needs_human">Necessidade de intervenção</option>
-                    <option value="out_of_hours">Intervenções fora do expediente</option>
-                    <option value="weekend_intervention">Intervenções do fim de semana</option>
+                    <option value="needs_human">Pendentes de humano</option>
+                    <option value="weekend_intervention">Pendentes do fim de semana</option>
+                    <option value="out_of_hours">Pendentes fora do expediente</option>
                     <option value="all">Status: Todos</option>
                     <option value="pendente">Pendentes</option>
-                    <option value="active">Em Andamento</option>
                     <option value="concluido">Concluídos</option>
                   </select>
                   <select
@@ -2146,7 +2153,8 @@ const Atendimentos = () => {
                                   takeOverChatMutation.mutate({
                                     id: selectedChatData.id,
                                     labels: selectedChatData.labels,
-                                    attendantId: user?.chatwoot_id
+                                    attendantId: user?.chatwoot_id,
+                                    attendantArea: user?.area || null
                                   });
                                 }}
                                 disabled={takeOverChatMutation.isPending}
@@ -2231,8 +2239,8 @@ const Atendimentos = () => {
                         // Mostrar nome do operador na primeira mensagem do bloco
                         const showAgentName = isAgent && displaySenderName && !isSameSender;
 
-                        // Formata horário (HH:MM) - corrige timezone
-                        const getMessageTime = () => {
+                        // Formata data e horário (DD/MM/AAAA HH:MM) - corrige timezone
+                        const getMessageDateTime = () => {
                           const timestamp = message.timestamp;
                           if (!timestamp) return '';
 
@@ -2263,18 +2271,20 @@ const Atendimentos = () => {
                               return '';
                             }
 
-                            // Obtém horas e minutos no timezone local do navegador
+                            const day = String(date.getDate()).padStart(2, '0');
+                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                            const year = date.getFullYear();
                             const hours = String(date.getHours()).padStart(2, '0');
                             const minutes = String(date.getMinutes()).padStart(2, '0');
 
-                            return `${hours}:${minutes}`;
+                            return `${day}/${month}/${year} ${hours}:${minutes}`;
                           } catch (error) {
-                            console.error('Erro ao formatar horário:', error, timestamp);
+                            console.error('Erro ao formatar data e horário:', error, timestamp);
                             return '';
                           }
                         };
 
-                        const messageTime = getMessageTime();
+                        const messageDateTime = getMessageDateTime();
 
                         const isLastMessage = index === messages.length - 1;
 
@@ -2526,7 +2536,7 @@ const Atendimentos = () => {
                                   isClient ? "justify-start" : "justify-end"
                                 )}>
                                   <span className="text-[11px] text-[#667781]">
-                                    {messageTime || '--:--'}
+                                    {messageDateTime || '--/--/---- --:--'}
                                   </span>
                                   {!isClient && (
                                     <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
@@ -2719,6 +2729,7 @@ const Atendimentos = () => {
               clientName={selectedChatData.client || selectedChatData.phone || 'Cliente'}
               chatId={selectedChatData.id}
               currentAttendant={selectedChatData.attendant || undefined}
+              labels={selectedChatData.labels}
             />
             <CloseTicketModal
               isOpen={showCloseModal}
