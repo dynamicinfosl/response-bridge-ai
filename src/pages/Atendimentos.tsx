@@ -186,6 +186,15 @@ const Atendimentos = () => {
   const [quickReplyForm, setQuickReplyForm] = useState({ title: '', shortcut: '', content: '' });
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [sectorFilter, setSectorFilter] = useState<string>('all');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [dateFilter, setDateFilter] = useState<string>('all');
+  const [customDateStart, setCustomDateStart] = useState<string>('');
+  const [customDateEnd, setCustomDateEnd] = useState<string>('');
+  const [senderFilter, setSenderFilter] = useState<string>('all');
+  const [alertFilter, setAlertFilter] = useState<string>('all');
+  const [assignmentFilter, setAssignmentFilter] = useState<string>('all');
+  const [unreadFilter, setUnreadFilter] = useState<string>('all');
+  const [labelFilter, setLabelFilter] = useState<string>('');
   const [chatsToShow, setChatsToShow] = useState<number>(20); // Quantidade inicial de chats a mostrar
   const [searchQuery, setSearchQuery] = useState<string>(''); // Busca de conversas
   const [showScrollButton, setShowScrollButton] = useState(false); // Mostrar botão de scroll
@@ -425,6 +434,17 @@ const Atendimentos = () => {
   const hasWeekendIntervention = (labels: string[]) => {
     const normalizedLabels = (labels || []).map(l => normalizeText(l));
     return normalizedLabels.includes('fim_semana_intervencao');
+  };
+
+  const resetAdvancedFilters = () => {
+    setDateFilter('all');
+    setCustomDateStart('');
+    setCustomDateEnd('');
+    setSenderFilter('all');
+    setAlertFilter('all');
+    setAssignmentFilter('all');
+    setUnreadFilter('all');
+    setLabelFilter('');
   };
 
   // Helpers de permissão por perfil
@@ -1329,9 +1349,12 @@ const Atendimentos = () => {
       const phoneNumber = formatPhoneNumber(chat.phone, chat.id);
       const rawPhone = (chat.id || '').replace(/\D/g, '');
 
-      return clientName.includes(query) ||
+      if (!(clientName.includes(query) ||
         phoneNumber.includes(query) ||
-        rawPhone.includes(query);
+        rawPhone.includes(query) ||
+        (chat.lastMessage || '').toLowerCase().includes(query))) {
+        return false;
+      }
     }
 
     // 4. FILTRO DE SETOR (Seleção na UI — só admin/master e encarregado)
@@ -1343,6 +1366,42 @@ const Atendimentos = () => {
         const canonicalKey = filterKey === 'tecnica' ? 'tecnico' : filterKey;
         if (primarySector !== canonicalKey) return false;
       }
+    }
+
+    const chatDate = new Date(chat.updatedAt || chat.time || chat.createdAt || 0);
+    const now = new Date();
+    if (dateFilter !== 'all') {
+      if (Number.isNaN(chatDate.getTime())) return false;
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const chatTime = chatDate.getTime();
+      if (dateFilter === 'today' && chatTime < startOfToday) return false;
+      if (dateFilter === 'yesterday') {
+        const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+        if (chatTime < startOfYesterday || chatTime >= startOfToday) return false;
+      }
+      if (dateFilter === '7d' && now.getTime() - chatTime > 7 * 24 * 60 * 60 * 1000) return false;
+      if (dateFilter === '30d' && now.getTime() - chatTime > 30 * 24 * 60 * 60 * 1000) return false;
+      if (dateFilter === 'custom') {
+        if (customDateStart) {
+          const start = new Date(`${customDateStart}T00:00:00`).getTime();
+          if (chatTime < start) return false;
+        }
+        if (customDateEnd) {
+          const end = new Date(`${customDateEnd}T23:59:59`).getTime();
+          if (chatTime > end) return false;
+        }
+      }
+    }
+
+    if (senderFilter !== 'all' && chat.lastMessageSender !== senderFilter) return false;
+    if (alertFilter !== 'all' && (chat.statusAlerta || 'normal') !== alertFilter) return false;
+    if (assignmentFilter === 'assigned' && !chat.assigneeId) return false;
+    if (assignmentFilter === 'unassigned' && chat.assigneeId) return false;
+    if (unreadFilter === 'unread' && Math.max(chat.unread || 0, localUnread[chat.id] || 0) <= 0) return false;
+    if (unreadFilter === 'read' && Math.max(chat.unread || 0, localUnread[chat.id] || 0) > 0) return false;
+    if (labelFilter.trim()) {
+      const labelQuery = normalizeText(labelFilter.trim());
+      if (!chatLabels.some(label => normalizeText(label).includes(labelQuery))) return false;
     }
 
     return true;
@@ -1400,7 +1459,7 @@ const Atendimentos = () => {
   // Resetar paginação quando mudar o filtro
   useEffect(() => {
     setChatsToShow(20);
-  }, [statusFilter]);
+  }, [statusFilter, sectorFilter, searchQuery, dateFilter, customDateStart, customDateEnd, senderFilter, alertFilter, assignmentFilter, unreadFilter, labelFilter]);
 
   // Mostrar loading
   if (chatsLoading) {
@@ -1469,7 +1528,12 @@ const Atendimentos = () => {
                       </Badge>
                     )}
                   </div>
-                  <Button variant="outline" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1">
+                  <Button
+                    variant={showAdvancedFilters ? "default" : "outline"}
+                    size="sm"
+                    className="h-7 px-2 text-[10px] flex items-center gap-1"
+                    onClick={() => setShowAdvancedFilters(prev => !prev)}
+                  >
                     <Filter className="w-3.5 h-3.5 text-muted-foreground" />
                     <span>Filtros</span>
                   </Button>
@@ -1482,12 +1546,11 @@ const Atendimentos = () => {
                     className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
                   >
                     <option value="active">Status: Em andamento</option>
+                    <option value="concluido">Status: Concluído</option>
                     <option value="needs_human">Pendentes de humano</option>
                     <option value="weekend_intervention">Pendentes do fim de semana</option>
                     <option value="out_of_hours">Pendentes fora do expediente</option>
                     <option value="all">Status: Todos</option>
-                    <option value="pendente">Pendentes</option>
-                    <option value="concluido">Concluídos</option>
                   </select>
                   <select
                     value={sectorFilter}
@@ -1516,6 +1579,89 @@ const Atendimentos = () => {
                     )}
                   </select>
                 </div>
+                {showAdvancedFilters && (
+                  <div className="grid grid-cols-2 gap-1.5 rounded-lg border bg-muted/20 p-2">
+                    <select
+                      value={dateFilter}
+                      onChange={(e) => setDateFilter(e.target.value)}
+                      className="h-7 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    >
+                      <option value="all">Data: Todas</option>
+                      <option value="today">Hoje</option>
+                      <option value="yesterday">Ontem</option>
+                      <option value="7d">Últimos 7 dias</option>
+                      <option value="30d">Últimos 30 dias</option>
+                      <option value="custom">Período personalizado</option>
+                    </select>
+                    <select
+                      value={senderFilter}
+                      onChange={(e) => setSenderFilter(e.target.value)}
+                      className="h-7 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    >
+                      <option value="all">Última msg: Todas</option>
+                      <option value="user">Cliente</option>
+                      <option value="agent">IA/Atendente</option>
+                    </select>
+                    {dateFilter === 'custom' && (
+                      <>
+                        <Input
+                          type="date"
+                          value={customDateStart}
+                          onChange={(e) => setCustomDateStart(e.target.value)}
+                          className="h-7 text-[10px]"
+                        />
+                        <Input
+                          type="date"
+                          value={customDateEnd}
+                          onChange={(e) => setCustomDateEnd(e.target.value)}
+                          className="h-7 text-[10px]"
+                        />
+                      </>
+                    )}
+                    <select
+                      value={alertFilter}
+                      onChange={(e) => setAlertFilter(e.target.value)}
+                      className="h-7 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    >
+                      <option value="all">SLA: Todos</option>
+                      <option value="normal">Normal</option>
+                      <option value="alerta">Alerta</option>
+                      <option value="critico">Crítico</option>
+                    </select>
+                    <select
+                      value={assignmentFilter}
+                      onChange={(e) => setAssignmentFilter(e.target.value)}
+                      className="h-7 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    >
+                      <option value="all">Atribuição: Todos</option>
+                      <option value="assigned">Com operador</option>
+                      <option value="unassigned">Sem operador</option>
+                    </select>
+                    <select
+                      value={unreadFilter}
+                      onChange={(e) => setUnreadFilter(e.target.value)}
+                      className="h-7 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    >
+                      <option value="all">Leitura: Todas</option>
+                      <option value="unread">Não lidas</option>
+                      <option value="read">Lidas</option>
+                    </select>
+                    <Input
+                      value={labelFilter}
+                      onChange={(e) => setLabelFilter(e.target.value)}
+                      placeholder="Filtrar por etiqueta"
+                      className="h-7 text-[10px]"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="col-span-2 h-7 text-[10px]"
+                      onClick={resetAdvancedFilters}
+                    >
+                      Limpar filtros avançados
+                    </Button>
+                  </div>
+                )}
               </div>
               <div className="relative mt-2">
                 <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />

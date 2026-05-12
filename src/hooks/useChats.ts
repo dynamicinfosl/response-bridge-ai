@@ -373,7 +373,7 @@ export function useChats() {
             }
           }
 
-          if (isClosed) return false;
+          if (isClosed) return true;
           if (isOpenOrPending) return true;
           return hasInterventionLabel && hasEscalationRecord;
         });
@@ -436,15 +436,18 @@ export function useChats() {
             }
           }
 
-          if (assignedUser) {
-            mappedChat.attendant = mappedChat.attendant || assignedUser.full_name || undefined;
-            mappedChat.attendantArea = formatUserArea(assignedUser.area);
+          if (hasHumanAssignee) {
             mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
               const normalized = label.toLowerCase();
               return normalized !== 'precisa_atendimento' &&
                 normalized !== 'fora_exp_intervencao' &&
                 normalized !== 'fim_semana_intervencao';
             });
+          }
+
+          if (assignedUser) {
+            mappedChat.attendant = mappedChat.attendant || assignedUser.full_name || undefined;
+            mappedChat.attendantArea = formatUserArea(assignedUser.area);
           }
 
           if (encerrados && encerrados.length > 0) {
@@ -454,7 +457,7 @@ export function useChats() {
                 mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
               }
             }
-            if (enc) {
+            if (enc && hasHumanAssignee) {
               mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
                 const normalized = label.toLowerCase();
                 return normalized !== 'precisa_atendimento' &&
@@ -466,10 +469,17 @@ export function useChats() {
 
           const monitor = monitorMap.get(mappedChat.id);
           if (monitor) {
-            mappedChat.waitingSince = monitor.waiting_since || undefined;
-            mappedChat.waitingMinutes = monitor.waiting_minutes || 0;
-            mappedChat.statusAlerta = monitor.status_alerta || 'normal';
-            mappedChat.atendenteTipo = monitor.atendente_tipo || 'nenhum';
+            if (mappedChat.lastMessageSender === 'user') {
+              mappedChat.waitingSince = monitor.waiting_since || undefined;
+              mappedChat.waitingMinutes = monitor.waiting_minutes || 0;
+              mappedChat.statusAlerta = monitor.status_alerta || 'normal';
+              mappedChat.atendenteTipo = monitor.atendente_tipo || 'nenhum';
+            } else {
+              mappedChat.waitingSince = undefined;
+              mappedChat.waitingMinutes = 0;
+              mappedChat.statusAlerta = 'normal';
+              mappedChat.atendenteTipo = 'nenhum';
+            }
           }
 
           return mappedChat;
