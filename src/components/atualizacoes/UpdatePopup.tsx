@@ -5,9 +5,8 @@ import { useLikes, useToggleLike, useComentarios, useCreateComentario, useVistas
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Heart, MessageCircle, Send, X, ChevronRight, Sparkles } from 'lucide-react';
+import { Heart, MessageCircle, Send, X, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { typeIcon, typeLabel, isAdmin } from './helpers';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
