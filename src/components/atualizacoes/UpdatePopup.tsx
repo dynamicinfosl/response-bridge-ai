@@ -9,8 +9,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Heart, MessageCircle, Send, X, ChevronRight, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { typeIcon, typeLabel } from './helpers';
+import { typeIcon, typeLabel, isAdmin } from './helpers';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
+
+const DEV_TEST_USER_KEY = 'dev_test_user_id';
 
 export function UpdatePopup() {
   const { user } = useAuth();
@@ -27,15 +29,22 @@ export function UpdatePopup() {
   const [comentarioTexto, setComentarioTexto] = useState('');
   const [showComentarios, setShowComentarios] = useState(false);
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const [devMode, setDevMode] = useState(false);
+  const [testUserId, setTestUserId] = useState<string>(() => {
+    try { return localStorage.getItem(DEV_TEST_USER_KEY) || ''; } catch { return ''; }
+  });
 
-  // Filtra atualizações não vistas pelo usuário atual
+  const effectiveUserId = testUserId || user?.id || '';
+  const admin = isAdmin(user?.role);
+
+  // Filtra atualizações não vistas pelo usuário efetivo (real ou teste)
   const naoVistas = useMemo(() => {
-    if (!user?.id) return [];
+    if (!effectiveUserId) return [];
     return atualizacoes.filter(a => {
-      const vista = vistas.find(v => v.atualizacao_id === a.id && v.user_id === user.id);
+      const vista = vistas.find(v => v.atualizacao_id === a.id && v.user_id === effectiveUserId);
       return !vista;
     });
-  }, [atualizacoes, vistas, user?.id]);
+  }, [atualizacoes, vistas, effectiveUserId]);
 
   // Abre popup quando há atualizações não vistas
   useEffect(() => {
@@ -52,37 +61,37 @@ export function UpdatePopup() {
   [likes, current?.id]);
 
   const userLiked = useMemo(() =>
-    likes.some(l => l.atualizacao_id === current?.id && l.user_id === user?.id),
-  [likes, current?.id, user?.id]);
+    likes.some(l => l.atualizacao_id === current?.id && l.user_id === effectiveUserId),
+  [likes, current?.id, effectiveUserId]);
 
   const currentComentarios = useMemo(() =>
     comentarios.filter(c => c.atualizacao_id === current?.id),
   [comentarios, current?.id]);
 
   const handleLike = async () => {
-    if (!current || !user?.id || processingIds.has(current.id)) return;
+    if (!current || !effectiveUserId || processingIds.has(current.id)) return;
     setProcessingIds(s => new Set(s).add(current.id));
     try {
-      await toggleLike.mutateAsync({ atualizacao_id: current.id, user_id: user.id });
+      await toggleLike.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
     } finally {
       setProcessingIds(s => { const n = new Set(s); n.delete(current.id); return n; });
     }
   };
 
   const handleComentar = async () => {
-    if (!current || !user?.id || !comentarioTexto.trim()) return;
+    if (!current || !effectiveUserId || !comentarioTexto.trim()) return;
     await createComentario.mutateAsync({
       atualizacao_id: current.id,
-      user_id: user.id,
+      user_id: effectiveUserId,
       texto: comentarioTexto.trim(),
     });
     setComentarioTexto('');
   };
 
   const handleNext = async () => {
-    if (!current || !user?.id) return;
+    if (!current || !effectiveUserId) return;
     // Marca como vista
-    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: user.id });
+    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
 
     if (currentIndex < naoVistas.length - 1) {
       setCurrentIndex(i => i + 1);
@@ -96,9 +105,15 @@ export function UpdatePopup() {
   };
 
   const handleClose = async () => {
-    if (!current || !user?.id) return;
-    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: user.id });
+    if (!current || !effectiveUserId) return;
+    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
     setOpen(false);
+  };
+
+  const handleSetTestUser = (id: string) => {
+    setTestUserId(id);
+    if (id) localStorage.setItem(DEV_TEST_USER_KEY, id);
+    else localStorage.removeItem(DEV_TEST_USER_KEY);
   };
 
   if (!current) return null;
@@ -106,6 +121,38 @@ export function UpdatePopup() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-white border-0 shadow-2xl rounded-2xl">
+        {/* Modo Dev - Admin pode simular outro usuário */}
+        {admin && (
+          <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setDevMode(d => !d)}
+                className="text-[11px] font-semibold text-yellow-700 hover:text-yellow-800 uppercase tracking-wider"
+              >
+                {devMode ? 'Ocultar Modo Teste' : 'Modo Teste'}
+              </button>
+              {testUserId && (
+                <span className="text-[10px] text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded-full">
+                  Simulando: {testUserId.slice(0, 8)}...
+                </span>
+              )}
+            </div>
+            {devMode && (
+              <div className="mt-2 flex gap-2">
+                <Input
+                  value={testUserId}
+                  onChange={e => handleSetTestUser(e.target.value)}
+                  placeholder="Cole o UUID do usuário de teste"
+                  className="h-7 text-xs"
+                />
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleSetTestUser('')}>
+                  Limpar
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Header */}
         <div className="relative bg-gradient-to-br from-primary/10 to-primary/5 p-5 pb-3">
           <button
