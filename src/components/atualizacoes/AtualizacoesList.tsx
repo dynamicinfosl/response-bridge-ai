@@ -2,10 +2,8 @@ import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
 import { Search, Filter, Clock } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { typeIcon, statusBadge, timeAgo } from './helpers';
+import { AtualizacaoSocialCard } from './AtualizacaoSocialCard';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
 
 interface Props {
@@ -73,32 +71,10 @@ export function AtualizacoesList({ atualizacoes, isLoading }: Props) {
         </CardContent>
       </Card>
 
-      {/* Lista */}
-      <div className="space-y-3">
+      {/* Lista com interações sociais */}
+      <div className="space-y-4">
         {filtered.map(a => (
-          <Card key={a.id} className={cn('shadow-sm border-l-4', {
-            'border-l-yellow-400': a.tipo === 'melhoria',
-            'border-l-red-400': a.tipo === 'correcao',
-            'border-l-green-400': a.tipo === 'novidade',
-            'border-l-gray-400': a.tipo === 'manutencao',
-          })}>
-            <CardContent className="py-4 px-5">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 p-2 bg-muted rounded-lg">{typeIcon(a.tipo)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-semibold text-foreground">{a.titulo}</h3>
-                    {statusBadge(a.status)}
-                    <Badge variant="secondary" className="text-[10px] h-5">{timeAgo(a.published_at || a.created_at)}</Badge>
-                  </div>
-                  {a.descricao && <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{a.descricao}</p>}
-                  <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                    {a.versao && <span>Versão: <span className="font-mono text-foreground">{a.versao}</span></span>}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <AtualizacaoSocialCard key={a.id} atualizacao={a} />
         ))}
       </div>
     </div>

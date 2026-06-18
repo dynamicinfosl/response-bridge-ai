@@ -36,6 +36,7 @@ export const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="h-screen overflow-hidden bg-background flex flex-col w-full">
+      <UpdatePopup />
       <Navbar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={isMobile ? toggleMobileMenu : undefined}

@@ -16,6 +16,11 @@ export function typeIcon(tipo: Atualizacao['tipo'], className?: string) {
   }
 }
 
+export function typeLabel(tipo: Atualizacao['tipo']) {
+  const map: Record<string, string> = { melhoria: 'Melhoria', correcao: 'Correção', novidade: 'Novidade', manutencao: 'Manutenção' };
+  return map[tipo] || tipo;
+}
+
 export function feedbackTypeIcon(tipo: Feedback['tipo'], className?: string) {
   const c = cn('h-4 w-4', className);
   switch (tipo) {
