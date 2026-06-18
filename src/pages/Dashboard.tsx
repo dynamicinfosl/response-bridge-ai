@@ -1,76 +1,161 @@
 import { useState, useMemo } from 'react';
 import { useAtendimentosEncerrados } from '@/hooks/useAtendimentosEncerrados';
 import { useChats } from '@/hooks/useChats';
+import { usePesquisasSatisfacao } from '@/hooks/usePesquisasSatisfacao';
 import { Layout } from '@/components/layout/Layout';
 import { StatsCard } from '@/components/dashboard/StatsCard';
-import { MetricsCard } from '@/components/dashboard/MetricsCard';
-import { InsightsCard } from '@/components/dashboard/InsightsCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { 
-  MessageSquare, 
   Clock, 
   CheckCircle, 
-  Users,
   TrendingUp,
-  Phone,
-  Mail,
   MessageCircle,
-  Download,
   RefreshCw,
   Calendar,
   Bot,
-  ChevronDown
+  ChevronDown,
+  ThumbsUp
 } from 'lucide-react';
+
+// Helpers
+const fmtSec = (sec: number) => {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}m ${s}s`;
+};
+
+const PIE_COLORS = ['#1E62C4', '#4A90E2', '#7BB3F0', '#A8D4FF', '#B0C4DE', '#6699CC'];
 
 const Dashboard = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('30');
-  const [channelChartPeriod, setChannelChartPeriod] = useState('semanal');
   const [efficiencyChartPeriod, setEfficiencyChartPeriod] = useState('30');
 
   const { data: encerrados = [], isLoading: loadingEncerrados } = useAtendimentosEncerrados();
   const { data: chats = [], isLoading: loadingChats } = useChats();
+  const { data: pesquisas = [], isLoading: loadingPesquisas } = usePesquisasSatisfacao();
 
+  // --- Filtrar por período selecionado ---
+  const periodoEncerrados = useMemo(() => {
+    const days = Number(selectedPeriod);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    return encerrados.filter((e: any) => {
+      const d = e.encerrado_em || e.created_at;
+      return d && new Date(d) >= cutoff;
+    });
+  }, [encerrados, selectedPeriod]);
+
+  // --- Métricas principais ---
   const metrics = useMemo(() => {
-    // Pendentes = Apenas chats que não estão concluídos e possuem a etiqueta 'precisa_atendimento'
-    const pendingChats = chats.filter((chat: any) => 
-      chat.status !== 'concluido' && 
-      chat.status !== 'resolved' && 
+    const pendingChats = chats.filter((chat: any) =>
+      chat.status !== 'concluido' &&
+      chat.status !== 'resolved' &&
       chat.labels?.includes('precisa_atendimento')
     ).length;
-    const totalEncerrados = encerrados.length;
-    const resolutionRate = totalEncerrados > 0 ? 100 : 0; 
-    
-    const iaCount = encerrados.filter((e: any) => e.resolvido_por?.toLowerCase() === 'ia').length;
-    
-    // Tempo Médio de Resposta (Média do novo campo tempo_medio_resposta_minutos)
-    const totalResponseTimeRaw = encerrados.reduce((acc: number, curr: any) => acc + (curr.tempo_medio_resposta_minutos || 0), 0);
-    const validResponseTimesCount = encerrados.filter((e: any) => e.tempo_medio_resposta_minutos != null).length;
-    const avgResponseTime = validResponseTimesCount > 0 ? (totalResponseTimeRaw / validResponseTimesCount).toFixed(0) : 0;
 
-    const iaPercent = totalEncerrados > 0 ? Math.round((iaCount / totalEncerrados) * 100) : 0;
+    const total = periodoEncerrados.length;
+    const iaCount = periodoEncerrados.filter((e: any) => e.resolvido_por?.toLowerCase() === 'ia').length;
+    const humanCount = periodoEncerrados.filter((e: any) => e.resolvido_por?.toLowerCase() === 'humano').length;
+    const iaPercent = total > 0 ? Math.round((iaCount / total) * 100) : 0;
 
-    return {
-      pendingChats,
-      resolutionRate,
-      avgResponseTime,
-      iaPercent
+    const validResp = periodoEncerrados.filter((e: any) => e.tempo_medio_resposta_minutos != null && e.tempo_medio_resposta_minutos > 0);
+    const avgResponseMin = validResp.length > 0
+      ? validResp.reduce((a: number, e: any) => a + e.tempo_medio_resposta_minutos, 0) / validResp.length
+      : 0;
+
+    const validTotal = periodoEncerrados.filter((e: any) => e.tempo_total_atendimento != null && e.tempo_total_atendimento > 0);
+    const avgTotalSec = validTotal.length > 0
+      ? validTotal.reduce((a: number, e: any) => a + e.tempo_total_atendimento, 0) / validTotal.length
+      : 0;
+
+    const pesquisasRespondidas = pesquisas.filter((p: any) => p.status === 'respondida' && p.nota != null);
+    const avgSatisfacao = pesquisasRespondidas.length > 0
+      ? (pesquisasRespondidas.reduce((a: number, p: any) => a + Number(p.nota || 0), 0) / pesquisasRespondidas.length).toFixed(1)
+      : '0.0';
+
+    return { pendingChats, total, iaCount, humanCount, iaPercent, avgResponseMin, avgTotalSec, avgSatisfacao, pesquisasRespondidas: pesquisasRespondidas.length };
+  }, [periodoEncerrados, chats, pesquisas]);
+
+  // --- Gráfico: Eficiência IA vs Humano por dia ---
+  const efficiencyChartData = useMemo(() => {
+    const days = Number(efficiencyChartPeriod);
+    const map: Record<string, { dia: string; ia: number; humano: number }> = {};
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+
+    encerrados.forEach((e: any) => {
+      const d = e.encerrado_em || e.created_at;
+      if (!d || new Date(d) < cutoff) return;
+      const dia = new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      if (!map[dia]) map[dia] = { dia, ia: 0, humano: 0 };
+      if (e.resolvido_por?.toLowerCase() === 'ia') map[dia].ia++;
+      else if (e.resolvido_por?.toLowerCase() === 'humano') map[dia].humano++;
+    });
+
+    return Object.values(map).sort((a, b) => {
+      const [ad, am] = a.dia.split('/').map(Number);
+      const [bd, bm] = b.dia.split('/').map(Number);
+      return am !== bm ? am - bm : ad - bd;
+    });
+  }, [encerrados, efficiencyChartPeriod]);
+
+  // --- Gráfico: IA vs Humano (pizza) ---
+  const iaHumanoPieData = useMemo(() => {
+    if (metrics.iaCount === 0 && metrics.humanCount === 0) return [];
+    return [
+      { name: 'IA', value: metrics.iaCount, color: '#10b981' },
+      { name: 'Humano', value: metrics.humanCount, color: '#3b82f6' },
+    ];
+  }, [metrics.iaCount, metrics.humanCount]);
+
+  // --- Gráfico: Distribuição por motivo de contato ---
+  const motivoPieData = useMemo(() => {
+    const map: Record<string, number> = {};
+    periodoEncerrados.forEach((e: any) => {
+      const m = e.motivo_contato?.trim() || 'Outros';
+      map[m] = (map[m] || 0) + 1;
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, value]) => ({ name, value }));
+  }, [periodoEncerrados]);
+
+  // --- Tabela: Tempo médio por resolvido_por ---
+  const avgTimeRows = useMemo(() => {
+    const calcAvg = (tipo: string) => {
+      const items = periodoEncerrados.filter((e: any) => e.resolvido_por?.toLowerCase() === tipo && e.tempo_total_atendimento > 0);
+      return items.length > 0 ? items.reduce((a: number, e: any) => a + e.tempo_total_atendimento, 0) / items.length : 0;
     };
-  }, [encerrados, chats]);
+    const iaAvg = calcAvg('ia');
+    const humAvg = calcAvg('humano');
+    const diff = humAvg - iaAvg;
+    const savings = humAvg > 0 ? Math.round((diff / humAvg) * 100) : 0;
+    return { iaAvg, humAvg, diff, savings };
+  }, [periodoEncerrados]);
 
-  const handleExport = () => {
-    // Simular exportação de dados
-    console.log('Exportando dados do período:', selectedPeriod);
-    // Aqui você implementaria a lógica real de exportação
-  };
+  // --- Insights dinâmicos ---
+  const insights = useMemo(() => {
+    const list = [];
+    if (metrics.total > 0) {
+      list.push({ icon: CheckCircle, title: `${metrics.total} atendimentos no período`, description: `${metrics.iaPercent}% resolvidos pela IA, ${100 - metrics.iaPercent}% por humanos.` });
+    }
+    if (metrics.avgResponseMin > 0) {
+      const respStr = metrics.avgResponseMin < 1 ? `${Math.round(metrics.avgResponseMin * 60)}s` : `${metrics.avgResponseMin.toFixed(1)}min`;
+      list.push({ icon: TrendingUp, title: `Tempo médio de resposta: ${respStr}`, description: metrics.avgResponseMin <= 3 ? 'Dentro da meta de 3 minutos.' : 'Acima da meta de 3 minutos. Revise os fluxos.' });
+    }
+    if (avgTimeRows.savings > 0) {
+      list.push({ icon: Bot, title: `IA ${avgTimeRows.savings}% mais rápida que humanos`, description: `Economia média de ${fmtSec(avgTimeRows.diff)} por atendimento.` });
+    }
+    list.push({ icon: Clock, title: 'Monitoramento ativo', description: 'Analisando padrões de atendimento em tempo real.' });
+    return list.slice(0, 4);
+  }, [metrics, avgTimeRows]);
 
-  const handleRefresh = () => {
-    // Simular atualização de dados
-    console.log('Atualizando dados...');
-    // Aqui você implementaria a lógica real de atualização
-    window.location.reload(); // Por enquanto, recarrega a página
-  };
+  const handleRefresh = () => window.location.reload();
+
   const statsData = [
     {
       title: 'Atendimentos Pendentes',
@@ -81,203 +166,37 @@ const Dashboard = () => {
     },
     {
       title: 'Tempo Médio de Resposta',
-      value: loadingEncerrados ? '...' : `${metrics.avgResponseTime}min`,
+      value: loadingEncerrados ? '...' : (metrics.avgResponseMin > 0 ? `${metrics.avgResponseMin.toFixed(1)}min` : '—'),
       subtitle: 'Meta: < 3min',
-      trend: { value: '0%', isPositive: true },
+      trend: { value: '0%', isPositive: metrics.avgResponseMin <= 3 },
       icon: TrendingUp
     },
     {
-      title: 'Taxa de Resolução',
-      value: loadingEncerrados ? '...' : `${metrics.resolutionRate}%`,
-      subtitle: 'Resolvidos hoje',
+      title: 'Resolvidos pela IA',
+      value: loadingEncerrados ? '...' : `${metrics.iaPercent}%`,
+      subtitle: `${metrics.iaCount} de ${metrics.total} atendimentos`,
       trend: { value: '0%', isPositive: true },
       icon: CheckCircle
     },
     {
-      title: 'Atendimentos IA vs Humano',
-      value: loadingEncerrados ? '...' : `${metrics.iaPercent}%`,
-      subtitle: 'Resolvidos pela IA',
+      title: 'Satisfação Média',
+      value: loadingPesquisas ? '...' : `${metrics.avgSatisfacao}/10`,
+      subtitle: `${metrics.pesquisasRespondidas} respostas recebidas`,
       trend: { value: '0%', isPositive: true },
-      icon: MessageSquare
+      icon: ThumbsUp
     }
   ];
-
-  // Dados para gráfico de barras empilhadas "Atendimentos por Canal"
-  const channelChartData = [
-    { period: 'Seg', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Ter', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Qua', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Qui', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Sex', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Sáb', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 },
-    { period: 'Dom', whatsapp: 0, chatSite: 0, telefone: 0, email: 0 }
-  ];
-
-  // Dados para gráfico de linha "Eficiência da IA vs Humano"
-  const efficiencyChartData = [
-    { day: 1, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 2, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 3, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 4, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 5, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 6, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 7, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 8, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 9, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 10, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 11, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 12, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 13, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 14, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 15, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 16, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 17, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 18, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 19, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 20, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 21, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 22, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 23, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 24, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 25, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 26, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 27, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 28, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 29, aiResolved: 0, humanResolved: 0, transferRate: 0 },
-    { day: 30, aiResolved: 0, humanResolved: 0, transferRate: 0 }
-  ];
-
-  const channelData = [
-    { name: 'WhatsApp', value: 0, color: 'bg-success' },
-    { name: 'Instagram', value: 0, color: 'bg-primary' },
-    { name: 'E-mail', value: 0, color: 'bg-warning' },
-    { name: 'Telefone', value: 0, color: 'bg-muted' }
-  ];
-
-  // Dados para a tabela de Tempo Médio de Atendimento
-  const averageTimeData = [
-    {
-      channel: 'WhatsApp',
-      icon: MessageCircle,
-      aiTime: '0m 0s',
-      humanTime: '0m 0s',
-      difference: '0m 0s',
-      savings: '0%'
-    },
-    {
-      channel: 'Chat Site',
-      icon: MessageSquare,
-      aiTime: '0m 0s',
-      humanTime: '0m 0s',
-      difference: '0m 0s',
-      savings: '0%'
-    },
-    {
-      channel: 'Telefone',
-      icon: Phone,
-      aiTime: '0m 0s',
-      humanTime: '0m 0s',
-      difference: '0m 0s',
-      savings: '0%'
-    },
-    {
-      channel: 'Email',
-      icon: Mail,
-      aiTime: '0m 0s',
-      humanTime: '0m 0s',
-      difference: '0m 0s',
-      savings: '0%'
-    }
-  ];
-
-  // Dados para insights do sistema
-  const systemInsights = [
-    {
-      icon: CheckCircle,
-      title: 'Sistema iniciado',
-      description: 'Aguardando dados para análise de economia de tempo.'
-    },
-    {
-      icon: TrendingUp,
-      title: 'Aguardando dados',
-      description: 'Coletando informações sobre resolução por IA.'
-    },
-    {
-      icon: Clock,
-      title: 'Monitoramento ativo',
-      description: 'Analisando padrões de atendimento em tempo real.'
-    },
-    {
-      icon: Bot,
-      title: 'IA configurada',
-      description: 'Sistema pronto para processar atendimentos.'
-    }
-  ];
-
-  // Dados para distribuição por tipo de atendimento
-  const serviceTypeData = [
-    { type: 'Dúvidas sobre produtos', color: '#1E62C4', colorClass: 'bg-primary' },
-    { type: 'Reclamações', color: '#4A90E2', colorClass: 'bg-blue-400' },
-    { type: 'Suporte técnico', color: '#7BB3F0', colorClass: 'bg-blue-300' },
-    { type: 'Outros', color: '#A8D4FF', colorClass: 'bg-blue-200' }
-  ];
-
-  // Dados para satisfação do cliente
-  const satisfactionData = [
-    { period: 'Jan', satisfaction: 0 },
-    { period: 'Fev', satisfaction: 0 },
-    { period: 'Mar', satisfaction: 0 },
-    { period: 'Abr', satisfaction: 0 },
-    { period: 'Mai', satisfaction: 0 },
-    { period: 'Jun', satisfaction: 0 },
-    { period: 'Jul', satisfaction: 0 },
-    { period: 'Ago', satisfaction: 0 }
-  ];
-
-  const recentChats = [];
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pendente':
-        return 'bg-warning/10 text-warning border-warning/20';
-      case 'em_andamento':
-        return 'bg-primary/10 text-primary border-primary/20';
-      case 'concluido':
-        return 'bg-success/10 text-success border-success/20';
-      default:
-        return 'bg-muted/10 text-muted-foreground border-muted/20';
-    }
-  };
-
-  const getChannelIcon = (channel: string) => {
-    switch (channel) {
-      case 'WhatsApp':
-        return <MessageCircle className="w-4 h-4 text-success" />;
-      case 'Instagram':
-        return <MessageSquare className="w-4 h-4 text-primary" />;
-      case 'E-mail':
-        return <Mail className="w-4 h-4 text-warning" />;
-      case 'Telefone':
-        return <Phone className="w-4 h-4 text-muted-foreground" />;
-      default:
-        return <MessageSquare className="w-4 h-4" />;
-    }
-  };
 
   return (
     <Layout>
       <div className="space-y-4">
-        {/* Page Header */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-foreground">Dashboard - Visão Geral</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Visão geral dos atendimentos e métricas
-            </p>
+            <p className="text-xs sm:text-sm text-muted-foreground">Visão geral dos atendimentos e métricas</p>
           </div>
-          
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            {/* Seletor de Período */}
             <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1.5">
               <Calendar className="w-3 h-3 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Período:</span>
@@ -293,24 +212,8 @@ const Dashboard = () => {
                 </SelectContent>
               </Select>
             </div>
-
-            {/* Botões de Ação */}
             <div className="flex items-center gap-2">
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={handleExport}
-                className="flex items-center gap-1.5 h-7 px-2 text-xs"
-              >
-                <Download className="w-3 h-3" />
-                <span className="hidden sm:inline">Exportar</span>
-              </Button>
-              
-              <Button 
-                size="sm"
-                onClick={handleRefresh}
-                className="flex items-center gap-1.5 h-7 px-2 text-xs"
-              >
+              <Button size="sm" onClick={handleRefresh} className="flex items-center gap-1.5 h-7 px-2 text-xs">
                 <RefreshCw className="w-3 h-3" />
                 <span className="hidden sm:inline">Atualizar</span>
               </Button>
@@ -325,217 +228,73 @@ const Dashboard = () => {
           ))}
         </div>
 
-        {/* Charts and Recent Activity */}
+        {/* Gráficos linha 1 */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
-          {/* Atendimentos por Canal - Gráfico de Barras Empilhadas */}
-          <Card className="shadow-card">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <span className="text-lg sm:text-xl">Atendimentos por Canal</span>
-                <div className="flex gap-1">
-                  {['diario', 'semanal', 'mensal'].map((period) => (
-                    <button
-                      key={period}
-                      onClick={() => setChannelChartPeriod(period)}
-                      className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                        channelChartPeriod === period
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                      }`}
-                    >
-                      {period === 'diario' ? 'Diário' : period === 'semanal' ? 'Semanal' : 'Mensal'}
-                    </button>
-                  ))}
-                </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              {/* Gráfico de Barras Empilhadas Simulado */}
-              <div className="h-64 flex items-end justify-between gap-2 mb-4">
-                {channelChartData.map((data, index) => {
-                  const total = data.whatsapp + data.chatSite + data.telefone + data.email;
-                  const maxValue = Math.max(...channelChartData.map(d => d.whatsapp + d.chatSite + d.telefone + d.email));
-                  
-                  return (
-                    <div key={index} className="flex-1 flex flex-col items-center">
-                      <div className="w-full h-48 bg-muted rounded-t-sm flex flex-col justify-end relative">
-                        {/* WhatsApp (azul) */}
-                        <div 
-                          className="w-full bg-primary transition-all duration-300"
-                          style={{ height: `${(data.whatsapp / maxValue) * 100}%` }}
-                        />
-                        {/* Chat Site (azul claro) */}
-                        <div 
-                          className="w-full bg-blue-400 transition-all duration-300"
-                          style={{ height: `${(data.chatSite / maxValue) * 100}%` }}
-                        />
-                        {/* Telefone (azul mais claro) */}
-                        <div 
-                          className="w-full bg-blue-300 transition-all duration-300"
-                          style={{ height: `${(data.telefone / maxValue) * 100}%` }}
-                        />
-                        {/* Email (cinza claro) */}
-                        <div 
-                          className="w-full bg-muted-foreground/30 transition-all duration-300"
-                          style={{ height: `${(data.email / maxValue) * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground mt-2">{data.period}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              
-              {/* Legenda */}
-              <div className="flex flex-wrap gap-4 justify-center">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-primary rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">WhatsApp</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Chat Site</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-300 rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Telefone</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-muted-foreground/30 rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Email</span>
-                  </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Eficiência da IA vs Humano - Gráfico de Linha */}
+          {/* IA vs Humano por dia */}
           <Card className="shadow-card">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center justify-between">
                 <span className="text-lg sm:text-xl">Eficiência da IA vs Humano</span>
                 <div className="flex gap-1">
-                  {['7', '30', '90'].map((period) => (
+                  {['7', '30', '90'].map((p) => (
                     <button
-                      key={period}
-                      onClick={() => setEfficiencyChartPeriod(period)}
-                      className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                        efficiencyChartPeriod === period
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                      }`}
+                      key={p}
+                      onClick={() => setEfficiencyChartPeriod(p)}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${efficiencyChartPeriod === p ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
                     >
-                      {period} dias
+                      {p} dias
                     </button>
                   ))}
                 </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {/* Gráfico de Linha Simulado */}
-              <div className="h-64 relative mb-4">
-                <svg className="w-full h-full" viewBox="0 0 400 200">
-                  {/* Grid lines */}
-                  <defs>
-                    <pattern id="grid" width="40" height="20" patternUnits="userSpaceOnUse">
-                      <path d="M 40 0 L 0 0 0 20" fill="none" stroke="#e5e7eb" strokeWidth="0.5"/>
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="100%" fill="url(#grid)" />
-                  
-                  {/* Linha IA (azul escuro, mais grossa) */}
-                  <polyline
-                    fill="none"
-                    stroke="#2563eb"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={efficiencyChartData.slice(0, 30).map((data, index) => 
-                      `${20 + (index * 12)},${180 - (data.aiResolved * 1.5)}`
-                    ).join(' ')}
-                  />
-                  
-                  {/* Linha Humano (azul claro, mais fina) */}
-                  <polyline
-                    fill="none"
-                    stroke="#60a5fa"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={efficiencyChartData.slice(0, 30).map((data, index) => 
-                      `${20 + (index * 12)},${180 - (data.humanResolved * 1.5)}`
-                    ).join(' ')}
-                  />
-                  
-                  {/* Linha Taxa de Transferência (azul muito claro, fina) */}
-                  <polyline
-                    fill="none"
-                    stroke="#93c5fd"
-                    strokeWidth="1"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={efficiencyChartData.slice(0, 30).map((data, index) => 
-                      `${20 + (index * 12)},${180 - (data.transferRate * 8)}`
-                    ).join(' ')}
-                  />
-                  
-                  {/* Pontos da linha IA */}
-                  {efficiencyChartData.slice(0, 30).map((data, index) => (
-                    <circle
-                      key={`ai-${index}`}
-                      cx={20 + (index * 12)}
-                      cy={180 - (data.aiResolved * 1.5)}
-                      r="3"
-                      fill="#2563eb"
-                    />
-                  ))}
-                  
-                  {/* Pontos da linha Humano */}
-                  {efficiencyChartData.slice(0, 30).map((data, index) => (
-                    <circle
-                      key={`human-${index}`}
-                      cx={20 + (index * 12)}
-                      cy={180 - (data.humanResolved * 1.5)}
-                      r="2"
-                      fill="#60a5fa"
-                    />
-                  ))}
-                  
-                  {/* Pontos da linha Transferência */}
-                  {efficiencyChartData.slice(0, 30).map((data, index) => (
-                    <circle
-                      key={`transfer-${index}`}
-                      cx={20 + (index * 12)}
-                      cy={180 - (data.transferRate * 8)}
-                      r="1.5"
-                      fill="#93c5fd"
-                    />
-                  ))}
-                </svg>
-                    </div>
-              
-              {/* Legenda */}
-              <div className="flex flex-wrap gap-4 justify-center">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-primary rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Resolvidos pela IA</span>
-                      </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Resolvidos por Humanos</span>
-                      </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-300 rounded-full"></div>
-                  <span className="text-sm text-muted-foreground">Taxa de Transferência</span>
-                  </div>
-              </div>
+              {efficiencyChartData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">Sem dados no período</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={efficiencyChartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="ia" name="Resolvidos pela IA" stroke="#2563eb" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="humano" name="Resolvidos por Humanos" stroke="#60a5fa" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
+          {/* Pizza IA vs Humano */}
+          <Card className="shadow-card">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg sm:text-xl">Distribuição IA vs Humano</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {iaHumanoPieData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">Sem dados no período</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={iaHumanoPieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                      {iaHumanoPieData.map((entry, i) => (
+                        <Cell key={i} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: any) => [`${v} atendimentos`]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Tempo Médio de Atendimento e Insights do Sistema */}
+        {/* Tempo Médio e Insights */}
         <div className="mt-4 sm:mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          {/* Card 1: Tempo Médio de Atendimento */}
+          {/* Tabela Tempo Médio */}
           <Card className="shadow-card">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center justify-between">
@@ -551,7 +310,7 @@ const Dashboard = () => {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Canal</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Tipo</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">IA (média)</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Humano (média)</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Diferença</th>
@@ -559,32 +318,24 @@ const Dashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {averageTimeData.map((item, index) => {
-                      const Icon = item.icon;
-                      return (
-                        <tr key={index} className="border-b border-border/50">
-                          <td className="py-3 px-2">
-                            <div className="flex items-center gap-2">
-                              <Icon className="w-4 h-4 text-primary" />
-                              <span className="text-sm font-medium">{item.channel}</span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-2 text-sm text-muted-foreground">{item.aiTime}</td>
-                          <td className="py-3 px-2 text-sm text-muted-foreground">{item.humanTime}</td>
-                          <td className="py-3 px-2 text-sm text-success font-medium">{item.difference}</td>
-                          <td className="py-3 px-2 text-sm text-success font-medium">{item.savings}</td>
-                        </tr>
-                      );
-                    })}
-                    {/* Linha de Média Total */}
-                    <tr className="border-t-2 border-border bg-muted/30">
+                    <tr className="border-b border-border/50">
                       <td className="py-3 px-2">
-                        <span className="text-sm font-semibold">Média Total</span>
+                        <div className="flex items-center gap-2">
+                          <MessageCircle className="w-4 h-4 text-primary" />
+                          <span className="text-sm font-medium">WhatsApp</span>
+                        </div>
                       </td>
-                      <td className="py-3 px-2 text-sm font-semibold">0m 0s</td>
-                      <td className="py-3 px-2 text-sm font-semibold">0m 0s</td>
-                      <td className="py-3 px-2 text-sm font-semibold text-success">0m 0s</td>
-                      <td className="py-3 px-2 text-sm font-semibold text-success">0%</td>
+                      <td className="py-3 px-2 text-sm text-muted-foreground">{avgTimeRows.iaAvg > 0 ? fmtSec(avgTimeRows.iaAvg) : '—'}</td>
+                      <td className="py-3 px-2 text-sm text-muted-foreground">{avgTimeRows.humAvg > 0 ? fmtSec(avgTimeRows.humAvg) : '—'}</td>
+                      <td className={`py-3 px-2 text-sm font-medium ${avgTimeRows.diff > 0 ? 'text-success' : 'text-muted-foreground'}`}>{avgTimeRows.diff > 0 ? fmtSec(avgTimeRows.diff) : '—'}</td>
+                      <td className={`py-3 px-2 text-sm font-medium ${avgTimeRows.savings > 0 ? 'text-success' : 'text-muted-foreground'}`}>{avgTimeRows.savings > 0 ? `${avgTimeRows.savings}%` : '—'}</td>
+                    </tr>
+                    <tr className="border-t-2 border-border bg-muted/30">
+                      <td className="py-3 px-2 text-sm font-semibold">Média Total</td>
+                      <td className="py-3 px-2 text-sm font-semibold">{avgTimeRows.iaAvg > 0 ? fmtSec(avgTimeRows.iaAvg) : '—'}</td>
+                      <td className="py-3 px-2 text-sm font-semibold">{avgTimeRows.humAvg > 0 ? fmtSec(avgTimeRows.humAvg) : '—'}</td>
+                      <td className={`py-3 px-2 text-sm font-semibold ${avgTimeRows.diff > 0 ? 'text-success' : 'text-muted-foreground'}`}>{avgTimeRows.diff > 0 ? fmtSec(avgTimeRows.diff) : '—'}</td>
+                      <td className={`py-3 px-2 text-sm font-semibold ${avgTimeRows.savings > 0 ? 'text-success' : 'text-muted-foreground'}`}>{avgTimeRows.savings > 0 ? `${avgTimeRows.savings}%` : '—'}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -592,7 +343,7 @@ const Dashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Card 2: Insights do Sistema */}
+          {/* Insights dinâmicos */}
           <Card className="shadow-card bg-primary/5 border-primary/20">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
@@ -604,7 +355,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent className="pt-0">
               <div className="space-y-4">
-                {systemInsights.map((insight, index) => {
+                {insights.map((insight, index) => {
                   const Icon = insight.icon;
                   return (
                     <div key={index} className="flex items-start gap-3 p-3 bg-white/50 rounded-lg border border-primary/10">
@@ -619,7 +370,6 @@ const Dashboard = () => {
                   );
                 })}
               </div>
-              
               <div className="mt-6">
                 <Button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
                   Ver todos os insights
@@ -629,144 +379,53 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* Segunda Linha - Distribuição por Tipo e Satisfação do Cliente */}
+        {/* Distribuição por Motivo e Barras de Atendimentos */}
         <div className="mt-4 sm:mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          {/* Card 3: Distribuição por Tipo de Atendimento */}
+          {/* Pizza motivo de contato */}
           <Card className="shadow-card">
             <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <span className="text-lg sm:text-xl">Distribuição por Tipo de Atendimento</span>
-                <Button variant="link" className="text-primary hover:text-primary/80 p-0 h-auto">
-                  Ver detalhes
-                </Button>
-              </CardTitle>
+              <CardTitle className="text-lg sm:text-xl">Distribuição por Motivo de Contato</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {/* Gráfico de Pizza */}
-              <div className="flex flex-col items-center gap-6">
-                {/* Gráfico de Pizza SVG */}
-                <div className="w-48 h-48 relative">
-                  <svg className="w-full h-full" viewBox="0 0 200 200">
-                    {/* Fundo cinza */}
-                    <circle cx="100" cy="100" r="80" fill="#f3f4f6" />
-                    
-                    {/* Dúvidas sobre produtos - 40% */}
-                    <path
-                      d="M 100,100 L 100,20 A 80,80 0 0,1 165.69,65.69 Z"
-                      fill="#1E62C4"
-                    />
-                    {/* Reclamações - 30% */}
-                    <path
-                      d="M 100,100 L 165.69,65.69 A 80,80 0 0,1 165.69,134.31 Z"
-                      fill="#4A90E2"
-                    />
-                    {/* Suporte técnico - 20% */}
-                    <path
-                      d="M 100,100 L 165.69,134.31 A 80,80 0 0,1 100,180 Z"
-                      fill="#7BB3F0"
-                    />
-                    {/* Outros - 10% */}
-                    <path
-                      d="M 100,100 L 100,180 A 80,80 0 0,1 34.31,134.31 Z"
-                      fill="#A8D4FF"
-                    />
-                  </svg>
-                </div>
-                
-                {/* Legenda */}
-                <div className="grid grid-cols-2 gap-4 w-full">
-                  {serviceTypeData.map((item, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded-full" 
-                        style={{ backgroundColor: item.color }}
-                      ></div>
-                      <span className="text-sm text-muted-foreground">{item.type}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {motivoPieData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">Sem dados no período</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={motivoPieData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`} labelLine={true}>
+                      {motivoPieData.map((_, i) => (
+                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: any, name: any) => [`${v} atendimentos`, name]} />
+                    <Legend formatter={(value) => <span className="text-xs">{value}</span>} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
-          {/* Card 4: Satisfação do Cliente */}
+          {/* Barras: Atendimentos por dia (IA vs Humano) */}
           <Card className="shadow-card">
             <CardHeader className="pb-4">
-              <CardTitle className="flex items-center justify-between">
-                <span className="text-lg sm:text-xl">Satisfação do Cliente</span>
-                <Button variant="link" className="text-primary hover:text-primary/80 p-0 h-auto">
-                  Ver detalhes
-                </Button>
-              </CardTitle>
+              <CardTitle className="text-lg sm:text-xl">Atendimentos por Dia</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {/* Métricas de Satisfação */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-success mb-1">0%</div>
-                  <div className="text-xs text-muted-foreground">Atendimentos IA</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-primary mb-1">0%</div>
-                  <div className="text-xs text-muted-foreground">Atendimentos Humanos</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-foreground mb-1">0%</div>
-                  <div className="text-xs text-muted-foreground">Média Geral</div>
-                </div>
-              </div>
-
-              {/* Gráfico de Linha de Satisfação */}
-              <div className="h-24 mb-6">
-                <svg className="w-full h-full" viewBox="0 0 300 80">
-                  {/* Linha principal (satisfação IA) */}
-                  <polyline
-                    fill="none"
-                    stroke="#22c55e"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={satisfactionData.map((data, index) => 
-                      `${20 + (index * 35)},${60 - (data.satisfaction * 0.5)}`
-                    ).join(' ')}
-                  />
-                  
-                  {/* Linha secundária (satisfação humana) */}
-                  <polyline
-                    fill="none"
-                    stroke="#3b82f6"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points={satisfactionData.map((data, index) => 
-                      `${20 + (index * 35)},${60 - ((data.satisfaction - 5) * 0.5)}`
-                    ).join(' ')}
-                  />
-                  
-                  {/* Pontos */}
-                  {satisfactionData.map((data, index) => (
-                    <circle
-                      key={index}
-                      cx={20 + (index * 35)}
-                      cy={60 - (data.satisfaction * 0.5)}
-                      r="2"
-                      fill="#22c55e"
-                    />
-                  ))}
-                </svg>
-        </div>
-
-              {/* Feedback Recente */}
-              <div className="border-t border-border pt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <MessageSquare className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-muted-foreground">Aguardando feedback</span>
-                </div>
-                <div className="text-xs text-muted-foreground mb-2">Nenhum feedback disponível</div>
-                <blockquote className="text-sm italic text-muted-foreground">
-                  "O sistema está pronto para coletar feedback dos atendimentos."
-                </blockquote>
-              </div>
+              {efficiencyChartData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">Sem dados no período</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={efficiencyChartData.slice(-14)} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="ia" name="IA" fill="#2563eb" radius={[2, 2, 0, 0]} stackId="a" />
+                    <Bar dataKey="humano" name="Humano" fill="#60a5fa" radius={[2, 2, 0, 0]} stackId="a" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </div>

@@ -20,6 +20,7 @@ import Clientes from "./pages/Clientes";
 import DisparosTemplates from "./pages/DisparosTemplates";
 import Perfil from "./pages/Perfil";
 import NotFound from "./pages/NotFound";
+import Atualizacoes from "./pages/Atualizacoes";
 import RouterAccess from "./pages/RouterAccess";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import RoleProtectedRoute from "./components/auth/RoleProtectedRoute";
@@ -101,6 +102,7 @@ const App = () => (
                 <Route path="/configuracao-ia" element={<ProtectedRoute><ConfiguracaoIA /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
                 <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
+                <Route path="/atualizacoes" element={<ProtectedRoute><Atualizacoes /></ProtectedRoute>} />
                 <Route path="/configuracoes-avancadas" element={<RoleProtectedRoute allowedRoles={['master']}><ConfiguracoesAvancadas /></RoleProtectedRoute>} />
                 <Route path="/teste-n8n" element={<ProtectedRoute><TesteN8N /></ProtectedRoute>} />
                 <Route path="/router-access" element={<RoleProtectedRoute allowedRoles={['master']}><RouterAccess /></RoleProtectedRoute>} />

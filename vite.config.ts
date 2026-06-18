@@ -49,6 +49,14 @@ export default defineConfig(({ mode }) => {
       /* ignore */
     }
   }
+  if (mode === "development") {
+    proxy["/api/vapi"] = {
+      target: "https://api.vapi.ai",
+      changeOrigin: true,
+      rewrite: (path: string) => path.replace(/^\/api\/vapi/, ""),
+      secure: true,
+    };
+  }
 
   return {
     server: {

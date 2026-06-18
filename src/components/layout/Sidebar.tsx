@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   MessageSquare,
+  Megaphone,
   Users,
   UserCircle,
   Phone,
@@ -94,6 +95,11 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
       title: 'Disparos Templates',
       href: '/disparos-templates',
       icon: SendHorizontal
+    },
+    {
+      title: 'Atualizações',
+      href: '/atualizacoes',
+      icon: Megaphone
     },
     {
       title: 'Configurações',

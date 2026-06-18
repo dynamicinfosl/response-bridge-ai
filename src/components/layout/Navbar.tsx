@@ -1,4 +1,7 @@
 import { Search, Menu, User as UserIcon, Settings, LogOut, ChevronDown } from 'lucide-react';
+import { NotificationBell } from './NotificationBell';
+import { UpdateNotificationBell } from './UpdateNotificationBell';
+import type { TransferNotification } from '@/hooks/useTransferNotification';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -20,9 +23,13 @@ import logoImage from '../../assets/Adapt-Link-Logo.png';
 interface NavbarProps {
   sidebarCollapsed: boolean;
   onToggleSidebar?: () => void;
+  notifications?: TransferNotification[];
+  unreadCount?: number;
+  markAsRead?: (id: string) => void;
+  markAllAsRead?: () => void;
 }
 
-export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
+export const Navbar = ({ sidebarCollapsed, onToggleSidebar, notifications = [], unreadCount = 0, markAsRead, markAllAsRead }: NavbarProps) => {
   const location = useLocation();
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -129,6 +136,8 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
         return 'Colaboradores';
       case '/configuracoes':
         return 'Configurações';
+      case '/atualizacoes':
+        return 'Atualizações & Feedback';
       case '/configuracoes-avancadas':
         return 'Configurações Avançadas';
       default:
@@ -202,6 +211,19 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar }: NavbarProps) => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* Update Notification Bell */}
+          <UpdateNotificationBell />
+
+          {/* Transfer Notification Bell */}
+          {user?.chatwoot_id && markAsRead && markAllAsRead && (
+            <NotificationBell
+              notifications={notifications}
+              unreadCount={unreadCount}
+              markAsRead={markAsRead}
+              markAllAsRead={markAllAsRead}
+            />
           )}
 
           {/* User Profile - Pushed to the extremity */}

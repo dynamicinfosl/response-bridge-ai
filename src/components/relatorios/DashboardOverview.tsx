@@ -134,8 +134,8 @@ export const DashboardOverview = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{metrics.avgSatisfacao} <span className="text-xl text-muted-foreground">/ 5</span></div>
-            <p className="text-xs text-muted-foreground mt-1">Média de satisfação geral (IA)</p>
+            <div className="text-3xl font-bold">{metrics.avgSatisfacao} <span className="text-xl text-muted-foreground">/ 10</span></div>
+            <p className="text-xs text-muted-foreground mt-1">Média de satisfação geral</p>
           </CardContent>
         </Card>
       </div>
@@ -193,7 +193,7 @@ export const DashboardOverview = () => {
                 <BarChart data={barData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" />
-                  <YAxis domain={[0, 5]} />
+                  <YAxis domain={[0, 10]} />
                   <Tooltip cursor={{fill: 'transparent'}}/>
                   <Bar dataKey="satisfacao" fill="#8884d8" radius={[4, 4, 0, 0]} maxBarSize={60}>
                     {barData.map((entry, index) => (

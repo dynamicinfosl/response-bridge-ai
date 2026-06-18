@@ -19,11 +19,13 @@ import {
   Play,
   Settings,
   Eye,
-  EyeOff
+  EyeOff,
+  Phone
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { invalidateN8NCache } from '@/lib/n8n-config';
+import { invalidateVoiceApiCache } from '@/lib/vapi-api';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ShieldX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -62,6 +64,9 @@ const ConfiguracoesAvancadas = () => {
   }
   const { settings: n8nSettings, loading: n8nLoading, saveSettings: saveN8nSettings } = useSystemSettings();
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showVoiceApiKey, setShowVoiceApiKey] = useState(false);
+  const [voiceApiKey, setVoiceApiKey] = useState('');
+  const [voiceApiKeySaving, setVoiceApiKeySaving] = useState(false);
   const [n8nConfig, setN8nConfig] = useState({
     n8n_api_url: '',
     n8n_api_key: '',
@@ -76,6 +81,22 @@ const ConfiguracoesAvancadas = () => {
       });
     }
   }, [n8nSettings, n8nLoading]);
+
+  // Carregar chave de voz do Supabase
+  useEffect(() => {
+    const loadVoiceKey = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const { data } = await supabase
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'vapi_api_key')
+          .single();
+        if (data?.value) setVoiceApiKey(data.value);
+      } catch (_) { /* silencioso */ }
+    };
+    loadVoiceKey();
+  }, []);
 
   const [horarioAtendimento, setHorarioAtendimento] = useState({
     segunda: { inicio: '08:00', fim: '18:00', ativo: true },
@@ -101,6 +122,27 @@ const ConfiguracoesAvancadas = () => {
   });
 
   const { toast } = useToast();
+
+  const handleSaveVoiceApiKey = async () => {
+    if (!voiceApiKey.trim()) {
+      toast({ title: 'Chave vazia', description: 'Informe a chave da API de voz.', variant: 'destructive' });
+      return;
+    }
+    setVoiceApiKeySaving(true);
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({ key: 'vapi_api_key', value: voiceApiKey.trim() }, { onConflict: 'key' });
+      if (error) throw error;
+      invalidateVoiceApiCache();
+      toast({ title: 'Chave salva!', description: 'Configuração de voz atualizada com sucesso.' });
+    } catch (err) {
+      toast({ title: 'Erro ao salvar', description: 'Não foi possível salvar a chave de voz.', variant: 'destructive' });
+    } finally {
+      setVoiceApiKeySaving(false);
+    }
+  };
 
   const handleSaveN8n = async () => {
     const success = await saveN8nSettings({
@@ -243,6 +285,55 @@ const ConfiguracoesAvancadas = () => {
                 Salvar Configurações do n8n
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Configurações de Ligações com IA */}
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Phone className="w-5 h-5 text-primary" />
+              Ligações com IA
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-primary-muted p-4 rounded-lg mb-4">
+              <p className="text-sm text-primary">
+                <strong>Importante:</strong> Configure a chave de acesso ao serviço de ligações por IA.
+                Sem ela, a página de Ligações não conseguirá carregar o histórico.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="voice-api-key">Chave de API — Ligações com IA</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="voice-api-key"
+                  type={showVoiceApiKey ? 'text' : 'password'}
+                  value={voiceApiKey}
+                  onChange={(e) => setVoiceApiKey(e.target.value)}
+                  placeholder="Chave de acesso ao serviço de voz"
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowVoiceApiKey(!showVoiceApiKey)}
+                >
+                  {showVoiceApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Chave necessária para consultar o histórico e detalhes das ligações realizadas pela IA.
+              </p>
+            </div>
+            <Button
+              onClick={handleSaveVoiceApiKey}
+              disabled={voiceApiKeySaving}
+              className="w-full bg-gradient-primary hover:shadow-primary"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              {voiceApiKeySaving ? 'Salvando...' : 'Salvar Chave de Ligações'}
+            </Button>
           </CardContent>
         </Card>
 

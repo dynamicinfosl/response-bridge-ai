@@ -1,7 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Navbar } from './Navbar';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useAuth } from '@/contexts/AuthContext';
+import { useChats } from '@/hooks/useChats';
+import { useTransferNotification } from '@/hooks/useTransferNotification';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -11,6 +15,16 @@ export const Layout = ({ children }: LayoutProps) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { data: chats } = useChats();
+
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useTransferNotification({
+    chats,
+    myId: user?.chatwoot_id,
+    userId: user?.id,
+    onNavigateToChat: () => navigate('/atendimentos'),
+  });
 
   const toggleMobileMenu = () => {
     setMobileMenuOpen(!mobileMenuOpen);
@@ -22,9 +36,13 @@ export const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="h-screen overflow-hidden bg-background flex flex-col w-full">
-      <Navbar 
-        sidebarCollapsed={sidebarCollapsed} 
+      <Navbar
+        sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={isMobile ? toggleMobileMenu : undefined}
+        notifications={notifications}
+        unreadCount={unreadCount}
+        markAsRead={markAsRead}
+        markAllAsRead={markAllAsRead}
       />
       <div className="flex flex-1 overflow-hidden relative">
         <Sidebar 

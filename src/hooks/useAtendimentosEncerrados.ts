@@ -38,7 +38,7 @@ export function useAtendimentosEncerrados() {
                 }
 
                 // Usando fetch direto para contornar qualquer bug de promise-hanging do supabase-js
-                const url = `${supabaseUrl}/rest/v1/atendimentos_encerrados?select=*&order=created_at.desc`;
+                const url = `${supabaseUrl}/rest/v1/atendimentos_encerrados?select=*&order=created_at.desc&limit=2000`;
                 const supabaseReq = fetch(url, {
                     headers: {
                         'apikey': anonKey,
