@@ -49,8 +49,10 @@ const Atualizacoes = () => {
             </TabsTrigger>
             <TabsTrigger value="feedbacks" className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5" />
-              Feedbacks
-              <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">{feedbacks.length}</Badge>
+              {admin ? 'Feedbacks' : 'Feedbacks enviados'}
+              <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
+                {admin ? feedbacks.length : feedbacks.filter(f => f.created_by === user?.id).length}
+              </Badge>
             </TabsTrigger>
           </TabsList>
 
@@ -60,7 +62,7 @@ const Atualizacoes = () => {
 
           <TabsContent value="feedbacks" className="mt-4">
             <FeedbacksList
-              feedbacks={feedbacks}
+              feedbacks={admin ? feedbacks : feedbacks.filter(f => f.created_by === user?.id)}
               atualizacoes={atualizacoes}
               isLoading={loadingFeedbacks}
               userRole={user?.role}

@@ -32,6 +32,7 @@ export function NovaAtualizacaoDialog() {
       await createAtualizacao.mutateAsync({
         ...form, created_by: user?.id || null,
         published_at: new Date().toISOString(), is_published: true, link_feedback_id: null,
+        target_user_id: null,
       });
       setOpen(false);
       setForm({ titulo: '', descricao: '', tipo: 'melhoria', status: 'concluido', versao: '' });

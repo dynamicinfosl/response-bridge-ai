@@ -3,10 +3,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Filter, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Search, Filter, MessageSquare, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { feedbackTypeIcon, statusBadge, timeAgo, isAdmin } from './helpers';
 import { ResponderFeedbackDialog } from './ResponderFeedbackDialog';
+import { useUpdateFeedback } from '@/hooks/useFeedbacks';
 import type { Feedback } from '@/hooks/useFeedbacks';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
 
@@ -20,7 +22,24 @@ interface Props {
 export function FeedbacksList({ feedbacks, atualizacoes, isLoading, userRole }: Props) {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('todos');
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const admin = isAdmin(userRole);
+  const updateFeedback = useUpdateFeedback();
+
+  const handleStatusChange = async (id: string, status: Feedback['status']) => {
+    setUpdatingId(id);
+    try {
+      await updateFeedback.mutateAsync({
+        id,
+        data: {
+          status,
+          resolvido_em: status === 'resolvido' ? new Date().toISOString() : null,
+        },
+      });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   const filtered = useMemo(() => {
     return feedbacks
@@ -108,9 +127,59 @@ export function FeedbacksList({ feedbacks, atualizacoes, isLoading, userRole }: 
                   )}
 
                   {/* Ações admin */}
-                  {admin && f.status !== 'resolvido' && f.status !== 'rejeitado' && (
-                    <div className="mt-3">
-                      <ResponderFeedbackDialog feedback={f} atualizacoes={atualizacoes} />
+                  {admin && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {f.status !== 'resolvido' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-green-200 text-green-700 hover:bg-green-50 hover:text-green-800"
+                          disabled={updatingId === f.id}
+                          onClick={() => handleStatusChange(f.id, 'resolvido')}
+                        >
+                          {updatingId === f.id ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />}
+                          Marcar como Resolvido
+                        </Button>
+                      )}
+                      {f.status !== 'em_desenvolvimento' && f.status !== 'resolvido' && f.status !== 'rejeitado' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                          disabled={updatingId === f.id}
+                          onClick={() => handleStatusChange(f.id, 'em_desenvolvimento')}
+                        >
+                          {updatingId === f.id ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Loader2 className="h-3 w-3 mr-1" />}
+                          Em Progresso
+                        </Button>
+                      )}
+                      {f.status !== 'em_analise' && f.status !== 'resolvido' && f.status !== 'rejeitado' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-yellow-200 text-yellow-700 hover:bg-yellow-50 hover:text-yellow-800"
+                          disabled={updatingId === f.id}
+                          onClick={() => handleStatusChange(f.id, 'em_analise')}
+                        >
+                          {updatingId === f.id ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <AlertTriangle className="h-3 w-3 mr-1" />}
+                          Em Análise
+                        </Button>
+                      )}
+                      {f.status !== 'rejeitado' && f.status !== 'resolvido' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                          disabled={updatingId === f.id}
+                          onClick={() => handleStatusChange(f.id, 'rejeitado')}
+                        >
+                          {updatingId === f.id ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <AlertTriangle className="h-3 w-3 mr-1" />}
+                          Rejeitar
+                        </Button>
+                      )}
+                      {f.status !== 'resolvido' && f.status !== 'rejeitado' && (
+                        <ResponderFeedbackDialog feedback={f} atualizacoes={atualizacoes} />
+                      )}
                     </div>
                   )}
                 </div>

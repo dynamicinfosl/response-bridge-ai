@@ -6,6 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/contexts/AuthContext';
 import { useChats } from '@/hooks/useChats';
 import { useTransferNotification } from '@/hooks/useTransferNotification';
+import { UpdatePopup } from '@/components/atualizacoes/UpdatePopup';
 
 interface LayoutProps {
   children: React.ReactNode;

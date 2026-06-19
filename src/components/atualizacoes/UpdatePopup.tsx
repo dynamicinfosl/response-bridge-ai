@@ -8,10 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Heart, MessageCircle, Send, X, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { typeIcon, typeLabel, isAdmin } from './helpers';
+import { typeIcon, typeLabel } from './helpers';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
-
-const DEV_TEST_USER_KEY = 'dev_test_user_id';
 
 export function UpdatePopup() {
   const { user } = useAuth();
@@ -28,32 +26,53 @@ export function UpdatePopup() {
   const [comentarioTexto, setComentarioTexto] = useState('');
   const [showComentarios, setShowComentarios] = useState(false);
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
-  const [devMode, setDevMode] = useState(false);
-  const [testUserId, setTestUserId] = useState<string>(() => {
-    try { return localStorage.getItem(DEV_TEST_USER_KEY) || ''; } catch { return ''; }
-  });
+  const [manualAtualizacao, setManualAtualizacao] = useState<Atualizacao | null>(null);
+  const [autoOpenEnabled, setAutoOpenEnabled] = useState(true);
 
-  const effectiveUserId = testUserId || user?.id || '';
-  const admin = isAdmin(user?.role);
+  const effectiveUserId = user?.id || '';
 
   // Filtra atualizações não vistas pelo usuário efetivo (real ou teste)
+  // Se a atualização tiver target_user_id, só mostra para aquele usuário
   const naoVistas = useMemo(() => {
     if (!effectiveUserId) return [];
     return atualizacoes.filter(a => {
+      // Se tem target_user_id, só esse usuário vê
+      if (a.target_user_id && a.target_user_id !== effectiveUserId) return false;
       const vista = vistas.find(v => v.atualizacao_id === a.id && v.user_id === effectiveUserId);
       return !vista;
     });
   }, [atualizacoes, vistas, effectiveUserId]);
 
-  // Abre popup quando há atualizações não vistas
+  // Atualizações a serem exibidas no popup
+  const displayAtualizacoes = useMemo(() => {
+    if (manualAtualizacao) return [manualAtualizacao];
+    return naoVistas;
+  }, [manualAtualizacao, naoVistas]);
+
+  // Abre popup automaticamente quando há atualizações não vistas (apenas se autoOpenEnabled)
   useEffect(() => {
-    if (naoVistas.length > 0 && !open) {
+    if (autoOpenEnabled && displayAtualizacoes.length > 0 && !open) {
       setCurrentIndex(0);
       setOpen(true);
     }
-  }, [naoVistas.length]);
+  }, [autoOpenEnabled, displayAtualizacoes.length, open]);
 
-  const current = naoVistas[currentIndex];
+  // Escuta evento para abrir popup manualmente a partir do sino de notificações
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { atualizacao: Atualizacao } | undefined;
+      if (detail?.atualizacao) {
+        setManualAtualizacao(detail.atualizacao);
+        setAutoOpenEnabled(false); // evita reabertura automática ao fechar
+        setCurrentIndex(0);
+        setOpen(true);
+      }
+    };
+    window.addEventListener('open-update-popup', handler);
+    return () => window.removeEventListener('open-update-popup', handler);
+  }, []);
+
+  const current = displayAtualizacoes[currentIndex];
 
   const currentLikes = useMemo(() =>
     likes.filter(l => l.atualizacao_id === current?.id).length,
@@ -67,52 +86,66 @@ export function UpdatePopup() {
     comentarios.filter(c => c.atualizacao_id === current?.id),
   [comentarios, current?.id]);
 
+  const realUserId = user?.id || '';
+
   const handleLike = async () => {
-    if (!current || !effectiveUserId || processingIds.has(current.id)) return;
+    if (!current || !realUserId || processingIds.has(current.id)) return;
+    console.log('[handleLike] atualizacao_id:', current.id, 'user_id:', realUserId, 'token?:', !!localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token'));
     setProcessingIds(s => new Set(s).add(current.id));
     try {
-      await toggleLike.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
+      await toggleLike.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });
+    } catch (err: any) {
+      console.error('Erro ao curtir:', err);
     } finally {
       setProcessingIds(s => { const n = new Set(s); n.delete(current.id); return n; });
     }
   };
 
   const handleComentar = async () => {
-    if (!current || !effectiveUserId || !comentarioTexto.trim()) return;
-    await createComentario.mutateAsync({
-      atualizacao_id: current.id,
-      user_id: effectiveUserId,
-      texto: comentarioTexto.trim(),
-    });
-    setComentarioTexto('');
+    if (!current || !realUserId || !comentarioTexto.trim()) return;
+    try {
+      await createComentario.mutateAsync({
+        atualizacao_id: current.id,
+        user_id: realUserId,
+        texto: comentarioTexto.trim(),
+      });
+      setComentarioTexto('');
+    } catch (err: any) {
+      console.error('Erro ao comentar:', err);
+    }
   };
 
   const handleNext = async () => {
-    if (!current || !effectiveUserId) return;
-    // Marca como vista
-    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
+    if (!current || !realUserId) return;
+    try {
+      await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });
+    } catch (err: any) {
+      console.error('Erro ao marcar visto:', err);
+    }
 
-    if (currentIndex < naoVistas.length - 1) {
+    if (currentIndex < displayAtualizacoes.length - 1) {
       setCurrentIndex(i => i + 1);
       setShowComentarios(false);
       setComentarioTexto('');
     } else {
       setOpen(false);
+      setAutoOpenEnabled(false);
       setCurrentIndex(0);
       setShowComentarios(false);
+      setManualAtualizacao(null);
     }
   };
 
   const handleClose = async () => {
-    if (!current || !effectiveUserId) return;
-    await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: effectiveUserId });
+    if (!current || !realUserId) return;
+    try {
+      await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });
+    } catch (err: any) {
+      console.error('Erro ao marcar visto:', err);
+    }
     setOpen(false);
-  };
-
-  const handleSetTestUser = (id: string) => {
-    setTestUserId(id);
-    if (id) localStorage.setItem(DEV_TEST_USER_KEY, id);
-    else localStorage.removeItem(DEV_TEST_USER_KEY);
+    setAutoOpenEnabled(false);
+    setManualAtualizacao(null);
   };
 
   if (!current) return null;
@@ -120,43 +153,11 @@ export function UpdatePopup() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md p-0 overflow-hidden bg-white border-0 shadow-2xl rounded-2xl">
-        {/* Modo Dev - Admin pode simular outro usuário */}
-        {admin && (
-          <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setDevMode(d => !d)}
-                className="text-[11px] font-semibold text-yellow-700 hover:text-yellow-800 uppercase tracking-wider"
-              >
-                {devMode ? 'Ocultar Modo Teste' : 'Modo Teste'}
-              </button>
-              {testUserId && (
-                <span className="text-[10px] text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded-full">
-                  Simulando: {testUserId.slice(0, 8)}...
-                </span>
-              )}
-            </div>
-            {devMode && (
-              <div className="mt-2 flex gap-2">
-                <Input
-                  value={testUserId}
-                  onChange={e => handleSetTestUser(e.target.value)}
-                  placeholder="Cole o UUID do usuário de teste"
-                  className="h-7 text-xs"
-                />
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleSetTestUser('')}>
-                  Limpar
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Header */}
         <div className="relative bg-gradient-to-br from-primary/10 to-primary/5 p-5 pb-3">
           <button
             onClick={handleClose}
-            className="absolute top-3 right-3 p-1.5 rounded-full bg-white/60 hover:bg-white/80 transition-colors"
+            className="absolute top-3 right-3 p-1.5 rounded-full bg-white/80 hover:bg-white shadow-sm z-10 transition-colors"
           >
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
@@ -246,14 +247,14 @@ export function UpdatePopup() {
         {/* Footer / Navegação */}
         <div className="px-5 py-4 flex items-center justify-between bg-muted/20">
           <div className="text-xs text-muted-foreground">
-            {currentIndex + 1} de {naoVistas.length} atualizações
+            {currentIndex + 1} de {displayAtualizacoes.length} atualizações
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleClose}>
               Fechar
             </Button>
             <Button size="sm" onClick={handleNext} className="flex items-center gap-1">
-              {currentIndex < naoVistas.length - 1 ? 'Próxima' : 'Concluir'}
+              {currentIndex < displayAtualizacoes.length - 1 ? 'Próxima' : 'Concluir'}
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

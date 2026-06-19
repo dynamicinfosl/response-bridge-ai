@@ -29,45 +29,74 @@ export interface Vista {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+function getToken() {
+  try {
+    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed?.access_token || anonKey;
+    }
+  } catch { /* ignore */ }
+  return anonKey;
+}
+
 /* ─── Likes ─── */
-async function fetchLikes(): Promise<Like[]> {
+async function fetchLikes(token: string): Promise<Like[]> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
   const res = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_likes?select=*`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-async function toggleLike(data: { atualizacao_id: string; user_id: string }): Promise<{ liked: boolean }> {
+async function toggleLike(data: { atualizacao_id: string; user_id: string }, token: string): Promise<{ liked: boolean }> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
 
-  // Check if already liked
-  const checkRes = await fetch(
-    `${supabaseUrl}/rest/v1/atualizacoes_likes?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}&select=id`,
-    { headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` } }
-  );
-  const existing = await checkRes.json();
+  // Tentar inserir primeiro (like)
+  const postRes = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_likes`, {
+    method: 'POST',
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify(data),
+  });
 
-  if (existing.length > 0) {
-    // Unlike
-    await fetch(
-      `${supabaseUrl}/rest/v1/atualizacoes_likes?id=eq.${existing[0].id}`,
-      {
-        method: 'DELETE',
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
-      }
-    );
-    return { liked: false };
-  } else {
-    // Like
-    await fetch(`${supabaseUrl}/rest/v1/atualizacoes_likes`, {
-      method: 'POST',
-      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify(data),
-    });
+  if (postRes.ok) {
     return { liked: true };
   }
+
+  const errText = await postRes.text();
+  console.error('[toggleLike] POST failed:', postRes.status, errText);
+
+  // Parse JSON error if possible
+  let errMessage = errText;
+  try {
+    const errJson = JSON.parse(errText);
+    errMessage = JSON.stringify(errJson);
+  } catch { /* ignore */ }
+
+  // Se erro de chave duplicada (já existe), deletar (unlike)
+  const isDuplicate = errMessage.toLowerCase().includes('duplicate') ||
+                      errMessage.includes('23505') ||
+                      postRes.status === 409 ||
+                      errMessage.toLowerCase().includes('unique constraint');
+
+  if (isDuplicate) {
+    console.log('[toggleLike] Duplicate detected, deleting (unlike)...');
+    const delRes = await fetch(
+      `${supabaseUrl}/rest/v1/atualizacoes_likes?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}`,
+      {
+        method: 'DELETE',
+        headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
+      }
+    );
+    if (!delRes.ok) {
+      const delErr = await delRes.text();
+      console.error('[toggleLike] DELETE failed:', delRes.status, delErr);
+    }
+    return { liked: false };
+  }
+
+  throw new Error(`Like HTTP ${postRes.status}: ${errText}`);
 }
 
 /* ─── Comentários ─── */
@@ -81,49 +110,70 @@ async function fetchComentarios(): Promise<Comentario[]> {
   return res.json();
 }
 
-async function createComentario(data: { atualizacao_id: string; user_id: string; texto: string }): Promise<Comentario> {
+async function createComentario(data: { atualizacao_id: string; user_id: string; texto: string }, token: string): Promise<Comentario> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
+  console.log('[createComentario] token prefix:', token.slice(0, 20) + '...', 'data:', data);
   const res = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_comentarios`, {
     method: 'POST',
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('[createComentario] failed:', res.status, errText);
+    throw new Error(`HTTP ${res.status}: ${errText}`);
+  }
   const rows = await res.json();
   return rows[0];
 }
 
-async function deleteComentario(id: string): Promise<void> {
+async function deleteComentario(id: string, token: string): Promise<void> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
   await fetch(`${supabaseUrl}/rest/v1/atualizacoes_comentarios?id=eq.${id}`, {
     method: 'DELETE',
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
   });
 }
 
 /* ─── Vistas (popup tracking) ─── */
-async function fetchVistas(): Promise<Vista[]> {
+async function fetchVistas(token: string): Promise<Vista[]> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
   const res = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_vistas?select=*`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-async function marcarVisto(data: { atualizacao_id: string; user_id: string }): Promise<Vista> {
+async function marcarVisto(data: { atualizacao_id: string; user_id: string }, token: string): Promise<Vista> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
+
   const res = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_vistas`, {
     method: 'POST',
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const rows = await res.json();
-  return rows[0];
+
+  if (res.ok) {
+    const rows = await res.json();
+    return rows[0];
+  }
+
+  const errText = await res.text();
+  // Se erro de chave duplicada, buscar e retornar o registro existente
+  if (errText.includes('duplicate') || errText.includes('23505') || res.status === 409) {
+    const getRes = await fetch(
+      `${supabaseUrl}/rest/v1/atualizacoes_vistas?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}&select=*&limit=1`,
+      { headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    const rows = await getRes.json();
+    return rows[0];
+  }
+
+  throw new Error(`Visto HTTP ${res.status}: ${errText}`);
 }
 
-async function updateVista(data: { atualizacao_id: string; user_id: string; curtido?: boolean; comentou?: boolean }): Promise<Vista> {
+async function updateVista(data: { atualizacao_id: string; user_id: string; curtido?: boolean; comentou?: boolean }, token: string): Promise<Vista> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
   const payload: Record<string, any> = {};
   if (data.curtido !== undefined) payload.curtido = data.curtido;
@@ -133,7 +183,7 @@ async function updateVista(data: { atualizacao_id: string; user_id: string; curt
     `${supabaseUrl}/rest/v1/atualizacoes_vistas?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}`,
     {
       method: 'PATCH',
-      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
     }
   );
@@ -142,15 +192,26 @@ async function updateVista(data: { atualizacao_id: string; user_id: string; curt
   return rows[0];
 }
 
+function getAuthToken(): string {
+  try {
+    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed?.access_token) return parsed.access_token;
+    }
+  } catch { /* ignore */ }
+  return anonKey;
+}
+
 /* ─── Hooks ─── */
 export function useLikes() {
-  return useQuery({ queryKey: ['atualizacoes-likes'], queryFn: fetchLikes });
+  return useQuery<Like[]>({ queryKey: ['atualizacoes-likes'], queryFn: () => fetchLikes(getAuthToken()) });
 }
 
 export function useToggleLike() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: toggleLike,
+    mutationFn: (data: { atualizacao_id: string; user_id: string }) => toggleLike(data, getAuthToken()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['atualizacoes-likes'] }),
   });
 }
@@ -162,7 +223,7 @@ export function useComentarios() {
 export function useCreateComentario() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: createComentario,
+    mutationFn: (data: { atualizacao_id: string; user_id: string; texto: string }) => createComentario(data, getAuthToken()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['atualizacoes-comentarios'] }),
   });
 }
@@ -170,19 +231,19 @@ export function useCreateComentario() {
 export function useDeleteComentario() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: deleteComentario,
+    mutationFn: (id: string) => deleteComentario(id, getAuthToken()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['atualizacoes-comentarios'] }),
   });
 }
 
 export function useVistas() {
-  return useQuery({ queryKey: ['atualizacoes-vistas'], queryFn: fetchVistas });
+  return useQuery<Vista[]>({ queryKey: ['atualizacoes-vistas'], queryFn: () => fetchVistas(getAuthToken()) });
 }
 
 export function useMarcarVisto() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: marcarVisto,
+    mutationFn: (data: { atualizacao_id: string; user_id: string }) => marcarVisto(data, getAuthToken()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['atualizacoes-vistas'] }),
   });
 }
@@ -190,7 +251,7 @@ export function useMarcarVisto() {
 export function useUpdateVista() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: updateVista,
+    mutationFn: (data: { atualizacao_id: string; user_id: string; curtido?: boolean; comentou?: boolean }) => updateVista(data, getAuthToken()),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['atualizacoes-vistas'] }),
   });
 }

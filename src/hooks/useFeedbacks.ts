@@ -16,14 +16,25 @@ export interface Feedback {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-async function fetchFeedbacks(): Promise<Feedback[]> {
+function getToken() {
+  try {
+    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed?.access_token || anonKey;
+    }
+  } catch { /* ignore */ }
+  return anonKey;
+}
+
+async function fetchFeedbacks(token: string): Promise<Feedback[]> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
 
   const url = `${supabaseUrl}/rest/v1/feedbacks?select=*&order=created_at.desc&limit=200`;
   const res = await fetch(url, {
     headers: {
       apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
   });
@@ -31,14 +42,14 @@ async function fetchFeedbacks(): Promise<Feedback[]> {
   return res.json();
 }
 
-async function createFeedback(data: Omit<Feedback, 'id' | 'created_at' | 'resolvido_em'>): Promise<Feedback> {
+async function createFeedback(data: Omit<Feedback, 'id' | 'created_at' | 'resolvido_em'>, token: string): Promise<Feedback> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
 
   const res = await fetch(`${supabaseUrl}/rest/v1/feedbacks`, {
     method: 'POST',
     headers: {
       apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },
@@ -49,14 +60,14 @@ async function createFeedback(data: Omit<Feedback, 'id' | 'created_at' | 'resolv
   return rows[0];
 }
 
-async function updateFeedback(id: string, data: Partial<Feedback>): Promise<Feedback> {
+async function updateFeedback(id: string, data: Partial<Feedback>, token: string): Promise<Feedback> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
 
   const res = await fetch(`${supabaseUrl}/rest/v1/feedbacks?id=eq.${id}`, {
     method: 'PATCH',
     headers: {
       apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },
@@ -70,7 +81,7 @@ async function updateFeedback(id: string, data: Partial<Feedback>): Promise<Feed
 export function useFeedbacks() {
   return useQuery({
     queryKey: ['feedbacks'],
-    queryFn: fetchFeedbacks,
+    queryFn: () => fetchFeedbacks(getToken()),
     refetchInterval: 60000,
   });
 }
@@ -78,7 +89,7 @@ export function useFeedbacks() {
 export function useCreateFeedback() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: createFeedback,
+    mutationFn: (data: Omit<Feedback, 'id' | 'created_at' | 'resolvido_em'>) => createFeedback(data, getToken()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedbacks'] });
     },
@@ -88,7 +99,7 @@ export function useCreateFeedback() {
 export function useUpdateFeedback() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Feedback> }) => updateFeedback(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Partial<Feedback> }) => updateFeedback(id, data, getToken()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['feedbacks'] });
     },

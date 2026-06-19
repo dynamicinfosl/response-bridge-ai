@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Megaphone, ArrowRight, CheckCheck, Inbox, ChevronDown, ChevronUp, Sparkles, Wrench, Bug, Shield } from 'lucide-react';
+import { Megaphone, ArrowRight, CheckCheck, Inbox, Sparkles, Wrench, Bug, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { useAtualizacoesPublicadas, type Atualizacao } from '@/hooks/useAtualizacoes';
+import { useAuth } from '@/contexts/AuthContext';
 
 const STORAGE_KEY = 'updates_last_seen_at';
 
@@ -43,12 +44,23 @@ function typeLabel(tipo: Atualizacao['tipo']) {
 
 export function UpdateNotificationBell() {
   const navigate = useNavigate();
-  const { data: atualizacoes = [], isLoading } = useAtualizacoesPublicadas();
+  const { user } = useAuth();
+  const { data: rawAtualizacoes = [], isLoading } = useAtualizacoesPublicadas();
   const [open, setOpen] = useState(false);
   const [lastSeenAt, setLastSeenAt] = useState<string>(() => {
     try { return localStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; }
   });
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const userId = user?.id || '';
+
+  // Filtra atualizações: se tem target_user_id, só mostra para esse usuário
+  const atualizacoes = useMemo(() => {
+    if (!userId) return rawAtualizacoes;
+    return rawAtualizacoes.filter(a => {
+      if (a.target_user_id && a.target_user_id !== userId) return false;
+      return true;
+    });
+  }, [rawAtualizacoes, userId]);
 
   // Detectar novas atualizações e tocar som
   useEffect(() => {
@@ -141,19 +153,19 @@ export function UpdateNotificationBell() {
             <div className="divide-y divide-border">
               {atualizacoes.slice(0, 10).map((atual) => {
                 const isUnread = !lastSeenAt || new Date(atual.published_at || atual.created_at) > new Date(lastSeenAt);
-                const isExpanded = expandedId === atual.id;
                 return (
                   <div
                     key={atual.id}
                     className={cn(
-                      'px-4 py-3 transition-colors',
+                      'px-4 py-3 transition-colors cursor-pointer',
                       isUnread ? 'bg-primary/5' : 'hover:bg-muted/50'
                     )}
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('open-update-popup', { detail: { atualizacao: atual } }));
+                      setOpen(false);
+                    }}
                   >
-                    <button
-                      onClick={() => setExpandedId(isExpanded ? null : atual.id)}
-                      className="w-full text-left flex items-start gap-3"
-                    >
+                    <div className="w-full text-left flex items-start gap-3">
                       <div className="flex-shrink-0 mt-0.5">
                         {typeIcon(atual.tipo)}
                       </div>
@@ -176,18 +188,9 @@ export function UpdateNotificationBell() {
                         </div>
                       </div>
                       <div className="flex-shrink-0 mt-1">
-                        {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
                       </div>
-                    </button>
-
-                    {isExpanded && (
-                      <div className="mt-2 pl-7 text-sm text-muted-foreground leading-relaxed">
-                        {atual.descricao || 'Sem descrição.'}
-                        {atual.versao && (
-                          <p className="mt-2 text-xs text-muted-foreground/60">Versão: {atual.versao}</p>
-                        )}
-                      </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}

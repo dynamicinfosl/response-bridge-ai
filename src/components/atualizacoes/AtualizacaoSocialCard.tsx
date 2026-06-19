@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLikes, useToggleLike, useComentarios, useCreateComentario, useDeleteComentario } from '@/hooks/useAtualizacoesSociais';
+import { useDeleteAtualizacao } from '@/hooks/useAtualizacoes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Heart, MessageCircle, Send, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { typeIcon, statusBadge, timeAgo } from './helpers';
+import { typeIcon, statusBadge, timeAgo, isAdmin } from './helpers';
 import type { Atualizacao } from '@/hooks/useAtualizacoes';
 
 interface Props {
@@ -20,10 +21,12 @@ export function AtualizacaoSocialCard({ atualizacao }: Props) {
   const toggleLike = useToggleLike();
   const createComentario = useCreateComentario();
   const deleteComentario = useDeleteComentario();
+  const deleteAtualizacao = useDeleteAtualizacao();
 
   const [comentarioTexto, setComentarioTexto] = useState('');
   const [showComentarios, setShowComentarios] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const admin = isAdmin(user?.role);
 
   const countLikes = useMemo(() =>
     likes.filter(l => l.atualizacao_id === atualizacao.id).length,
@@ -93,28 +96,42 @@ export function AtualizacaoSocialCard({ atualizacao }: Props) {
         </div>
 
         {/* Ações sociais */}
-        <div className="px-5 py-2.5 border-t border-border bg-muted/20 flex items-center gap-5">
-          <button
-            onClick={handleLike}
-            disabled={processing}
-            className={cn(
-              'flex items-center gap-1.5 transition-all duration-200 select-none',
-              userLiked ? 'text-red-500' : 'text-muted-foreground hover:text-red-400'
-            )}
-          >
-            <Heart className={cn('h-5 w-5', userLiked && 'fill-current')} />
-            <span className="text-sm font-medium">{countLikes || 'Curtir'}</span>
-          </button>
-          <button
-            onClick={() => setShowComentarios(s => !s)}
-            className="flex items-center gap-1.5 text-muted-foreground hover:text-primary transition-colors select-none"
-          >
-            <MessageCircle className="h-5 w-5" />
-            <span className="text-sm font-medium">
-              {atualComentarios.length > 0 ? `${atualComentarios.length}` : 'Comentar'}
-            </span>
-            {showComentarios ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </button>
+        <div className="px-5 py-2.5 border-t border-border bg-muted/20 flex items-center justify-between">
+          <div className="flex items-center gap-5">
+            <button
+              onClick={handleLike}
+              disabled={processing}
+              className={cn(
+                'flex items-center gap-1.5 transition-all duration-200 select-none',
+                userLiked ? 'text-red-500' : 'text-muted-foreground hover:text-red-400'
+              )}
+            >
+              <Heart className={cn('h-5 w-5', userLiked && 'fill-current')} />
+              <span className="text-sm font-medium">{countLikes || 'Curtir'}</span>
+            </button>
+            <button
+              onClick={() => setShowComentarios(s => !s)}
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-primary transition-colors select-none"
+            >
+              <MessageCircle className="h-5 w-5" />
+              <span className="text-sm font-medium">
+                {atualComentarios.length > 0 ? `${atualComentarios.length}` : 'Comentar'}
+              </span>
+              {showComentarios ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </button>
+          </div>
+          {admin && (
+            <button
+              onClick={() => {
+                if (confirm('Excluir esta atualização permanentemente?')) {
+                  deleteAtualizacao.mutate(atualizacao.id);
+                }
+              }}
+              className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="h-4 w-4" /> Excluir
+            </button>
+          )}
         </div>
 
         {/* Comentários */}
