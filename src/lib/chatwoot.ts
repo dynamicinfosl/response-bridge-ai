@@ -115,6 +115,13 @@ export const chatwootAPI = {
       body: JSON.stringify({ labels }),
     }),
 
+  // Contacts
+  searchContacts: (query: string) =>
+    chatwootFetch<any>(`/contacts/search?q=${encodeURIComponent(query)}&t=${Date.now()}`),
+
+  getContactConversations: (contactId: number) =>
+    chatwootFetch<any>(`/contacts/${contactId}/conversations?t=${Date.now()}`),
+
   // Conversations
   getConversations: (params?: string) =>
     chatwootFetch<ChatwootConversation[]>(`/conversations?t=${Date.now()}${params ? `&${params}` : ''}`),

@@ -114,7 +114,7 @@ const translateSystemMessage = (content: string): string => {
   return content;
 };
 
-const mapChatwootToChat = (conv: any): Chat => {
+export const mapChatwootToChat = (conv: any): Chat => {
   const contact = conv.contact || conv.meta?.sender || {};
   const phone = contact.phone_number || contact.phone || '';
   const name = contact.name || contact.pushName || contact.pushname || '';

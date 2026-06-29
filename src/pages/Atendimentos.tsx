@@ -47,6 +47,8 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useChats, useMessages, useSendMessage, useMarkAsRead, useUpdateChatStatus, useReactivateAI, useInterveneChat, useTakeOverChat, useSendAttachment } from '@/hooks/useChats';
+import { useChatSearch } from '@/hooks/useChatSearch';
+import type { Chat } from '@/lib/api';
 import { AudioRecorder } from '@/components/atendimentos/AudioRecorder';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -240,6 +242,7 @@ const Atendimentos = () => {
   const isInitialLoad = useRef(true);
 
   const { data: chatsData, isLoading: chatsLoading, error: chatsError } = useChats();
+  const { data: searchResults, isLoading: searchLoading } = useChatSearch(searchQuery);
   const { data: messagesData, isLoading: messagesLoading } = useMessages(selectedChat);
   const sendMessageMutation = useSendMessage();
   const sendAttachmentMutation = useSendAttachment();
@@ -1203,8 +1206,6 @@ const Atendimentos = () => {
     }
   };
 
-  const selectedChatData = chats.find(chat => chat.id === selectedChat);
-
   const normalizeQuickReplyShortcut = (value: string) =>
     value.trim().replace(/^\/+/, '').toLowerCase().replace(/\s+/g, '-');
 
@@ -1407,8 +1408,21 @@ const Atendimentos = () => {
     return true;
   });
 
+  // Mesclar resultados locais com busca remota do Chatwoot
+  const searchChats = searchQuery.trim() ? (searchResults || []) : [];
+  const mergedChatMap = new Map<string, Chat>();
+  filteredChats.forEach(chat => mergedChatMap.set(chat.id, chat));
+  searchChats.forEach(chat => {
+    if (!mergedChatMap.has(chat.id)) {
+      mergedChatMap.set(chat.id, chat);
+    }
+  });
+  const mergedChats = Array.from(mergedChatMap.values());
+
+  const selectedChatData = mergedChats.find(chat => chat.id === selectedChat);
+
   // Ordenar por prioridade de tempo de espera (crítico > alerta > normal)
-  const sortedChats = [...filteredChats].sort((a, b) => {
+  const sortedChats = [...mergedChats].sort((a, b) => {
     const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
     const specialPriority = (chat: any) => {
       if (!['needs_human', 'out_of_hours', 'weekend_intervention'].includes(statusFilter)) return 3;
@@ -1675,10 +1689,14 @@ const Atendimentos = () => {
             </CardHeader>
             <CardContent className="p-0 flex-1 overflow-hidden flex flex-col min-h-0">
               <div className="flex-1 overflow-y-auto min-h-0">
-                {filteredChats.length === 0 ? (
+                {mergedChats.length === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>Nenhum chat encontrado</p>
+                    {searchLoading ? (
+                      <p>buscando no banco de dados</p>
+                    ) : (
+                      <p>Nenhum chat encontrado</p>
+                    )}
                   </div>
                 ) : (
                   <>

@@ -22,7 +22,7 @@ export function ResponderFeedbackDialog({ feedback, atualizacoes }: Props) {
   const updateFeedback = useUpdateFeedback();
   const [open, setOpen] = useState(false);
   const [resposta, setResposta] = useState('');
-  const [vincularId, setVincularId] = useState<string>('');
+  const [vincularId, setVincularId] = useState<string>('none');
 
   const submit = async () => {
     if (!resposta.trim()) {
@@ -35,11 +35,11 @@ export function ResponderFeedbackDialog({ feedback, atualizacoes }: Props) {
         status: 'resolvido',
         resolvido_em: new Date().toISOString(),
       };
-      if (vincularId) payload.atualizacao_id = vincularId;
+      if (vincularId && vincularId !== 'none') payload.atualizacao_id = vincularId;
       await updateFeedback.mutateAsync({ id: feedback.id, data: payload });
       setOpen(false);
       setResposta('');
-      setVincularId('');
+      setVincularId('none');
       toast({ title: 'Feedback resolvido com sucesso!' });
     } catch (err: any) {
       toast({ title: 'Erro ao responder', description: String(err), variant: 'destructive' });
@@ -70,7 +70,7 @@ export function ResponderFeedbackDialog({ feedback, atualizacoes }: Props) {
             <Select value={vincularId} onValueChange={setVincularId}>
               <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Nenhuma</SelectItem>
+                <SelectItem value="none">Nenhuma</SelectItem>
                 {atualizacoes.map(a => (
                   <SelectItem key={a.id} value={a.id}>{a.titulo}</SelectItem>
                 ))}
