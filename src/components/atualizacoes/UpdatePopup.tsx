@@ -28,6 +28,8 @@ export function UpdatePopup() {
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
   const [manualAtualizacao, setManualAtualizacao] = useState<Atualizacao | null>(null);
   const [autoOpenEnabled, setAutoOpenEnabled] = useState(true);
+  // Snapshot do array no momento da abertura — evita shrink durante navegação
+  const [sessionAtualizacoes, setSessionAtualizacoes] = useState<Atualizacao[]>([]);
 
   const effectiveUserId = user?.id || '';
 
@@ -52,9 +54,11 @@ export function UpdatePopup() {
   // Abre popup automaticamente quando há atualizações não vistas (apenas se autoOpenEnabled)
   useEffect(() => {
     if (autoOpenEnabled && displayAtualizacoes.length > 0 && !open) {
+      setSessionAtualizacoes(displayAtualizacoes);
       setCurrentIndex(0);
       setOpen(true);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpenEnabled, displayAtualizacoes.length, open]);
 
   // Escuta evento para abrir popup manualmente a partir do sino de notificações
@@ -63,6 +67,7 @@ export function UpdatePopup() {
       const detail = (e as CustomEvent).detail as { atualizacao: Atualizacao } | undefined;
       if (detail?.atualizacao) {
         setManualAtualizacao(detail.atualizacao);
+        setSessionAtualizacoes([detail.atualizacao]);
         setAutoOpenEnabled(false); // evita reabertura automática ao fechar
         setCurrentIndex(0);
         setOpen(true);
@@ -72,7 +77,9 @@ export function UpdatePopup() {
     return () => window.removeEventListener('open-update-popup', handler);
   }, []);
 
-  const current = displayAtualizacoes[currentIndex];
+  // Usa sessionAtualizacoes se já populado, senão cai no displayAtualizacoes (evita current undefined na primeira render)
+  const activeList = sessionAtualizacoes.length > 0 ? sessionAtualizacoes : displayAtualizacoes;
+  const current = activeList[currentIndex];
 
   const currentLikes = useMemo(() =>
     likes.filter(l => l.atualizacao_id === current?.id).length,
@@ -115,19 +122,28 @@ export function UpdatePopup() {
     }
   };
 
+  const markAllSessionSeen = async (list: Atualizacao[]) => {
+    if (!realUserId || list.length === 0) return;
+    for (const at of list) {
+      try {
+        await marcarVisto.mutateAsync({ atualizacao_id: at.id, user_id: realUserId });
+      } catch (err: any) {
+        console.error('Erro ao marcar visto:', err);
+      }
+    }
+  };
+
   const handleNext = async () => {
     if (!current || !realUserId) return;
-    try {
-      await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });
-    } catch (err: any) {
-      console.error('Erro ao marcar visto:', err);
-    }
 
-    if (currentIndex < displayAtualizacoes.length - 1) {
+    if (currentIndex < activeList.length - 1) {
+      // Avança para a próxima sem marcar visto ainda
       setCurrentIndex(i => i + 1);
       setShowComentarios(false);
       setComentarioTexto('');
     } else {
+      // Última atualização — marca todas como vistas e fecha
+      await markAllSessionSeen(activeList);
       setOpen(false);
       setAutoOpenEnabled(false);
       setCurrentIndex(0);
@@ -137,12 +153,9 @@ export function UpdatePopup() {
   };
 
   const handleClose = async () => {
-    if (!current || !realUserId) return;
-    try {
-      await marcarVisto.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });
-    } catch (err: any) {
-      console.error('Erro ao marcar visto:', err);
-    }
+    if (!realUserId) return;
+    // Marca todas as atualizações da sessão como vistas ao fechar
+    await markAllSessionSeen(activeList);
     setOpen(false);
     setAutoOpenEnabled(false);
     setManualAtualizacao(null);
@@ -247,14 +260,14 @@ export function UpdatePopup() {
         {/* Footer / Navegação */}
         <div className="px-5 py-4 flex items-center justify-between bg-muted/20">
           <div className="text-xs text-muted-foreground">
-            {currentIndex + 1} de {displayAtualizacoes.length} atualizações
+            {activeList.length > 1 ? `${currentIndex + 1} de ${activeList.length} atualizações` : ''}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleClose}>
               Fechar
             </Button>
             <Button size="sm" onClick={handleNext} className="flex items-center gap-1">
-              {currentIndex < displayAtualizacoes.length - 1 ? 'Próxima' : 'Concluir'}
+              {currentIndex < activeList.length - 1 ? 'Próxima' : 'Concluir'}
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
