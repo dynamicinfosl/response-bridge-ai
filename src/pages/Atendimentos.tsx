@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { TransferModal } from '@/components/atendimentos/TransferModal';
 import { CloseTicketModal } from '@/components/atendimentos/CloseTicketModal';
@@ -42,7 +43,9 @@ import {
   Pencil,
   Trash2,
   Timer,
-  AlertTriangle
+  AlertTriangle,
+  Inbox,
+  History
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -63,12 +66,14 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { consultaDoc, consultaNome } from '@/lib/mk-api';
+import { consultaDoc, consultaNome, mapClienteMK } from '@/lib/mk-api';
 import type { MKClienteDoc } from '@/lib/mk-api';
 import { useClienteResumo } from '@/hooks/useMK';
+import { useClientIdentitiesForPhones, useSaveClientIdentity, normalizePhone, type ClientIdentity } from '@/hooks/useClientIdentities';
 import { ClientSummaryPanel } from '@/components/atendimentos/ClientSummaryPanel';
 import { useCreateQuickReply, useDeleteQuickReply, useQuickReplies, useUpdateQuickReply, type QuickReply } from '@/hooks/useQuickReplies';
 import { logAuditAction } from '@/lib/audit';
+import { supabase } from '@/lib/supabase';
 const WhatsAppAudioPlayer = ({ url }: { url: string }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -199,6 +204,9 @@ const Atendimentos = () => {
   const [labelFilter, setLabelFilter] = useState<string>('');
   const [chatsToShow, setChatsToShow] = useState<number>(20); // Quantidade inicial de chats a mostrar
   const [searchQuery, setSearchQuery] = useState<string>(''); // Busca de conversas
+  const [myChatsMode, setMyChatsMode] = useState(false);
+  const [myChatsTab, setMyChatsTab] = useState<'ativos' | 'historico'>('ativos');
+  const [notifiedTransferIds, setNotifiedTransferIds] = useState<Set<string>>(new Set());
   const [showScrollButton, setShowScrollButton] = useState(false); // Mostrar botão de scroll
   const [newMessageCount, setNewMessageCount] = useState(0); // Contador de novas mensagens
   const [localRepliedChats, setLocalRepliedChats] = useState<Record<string, number>>({}); // Armazena chats respondidos localmente
@@ -240,12 +248,29 @@ const Atendimentos = () => {
   const [localUnread, setLocalUnread] = useState<Record<string, number>>({});
   const lastSeenTimes = useRef<Record<string, number>>({});
   const isInitialLoad = useRef(true);
+  const previousMyChatsRef = useRef<Set<string>>(new Set());
+  const isInitialMyChatsLoadRef = useRef(true);
+
+  const location = useLocation();
+
+  // Abrir conversa específica ao navegar via notificação
+  useEffect(() => {
+    const openChatId = (location.state as any)?.openChatId;
+    if (openChatId) {
+      setSelectedChat(openChatId);
+      setMyChatsMode(true);
+      setMyChatsTab('ativos');
+      window.history.replaceState({}, '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const { data: chatsData, isLoading: chatsLoading, error: chatsError } = useChats();
   const { data: searchResults, isLoading: searchLoading } = useChatSearch(searchQuery);
   const { data: messagesData, isLoading: messagesLoading } = useMessages(selectedChat);
   const sendMessageMutation = useSendMessage();
   const sendAttachmentMutation = useSendAttachment();
+  const saveClientIdentityMutation = useSaveClientIdentity();
 
   const handleSendAudio = (blob: Blob) => {
     if (!selectedChat) return;
@@ -467,6 +492,20 @@ const Atendimentos = () => {
     return '';
   })();
 
+  const isAssignedToMe = (chat: Chat) => {
+    return Boolean(user?.chatwoot_id && chat.assigneeId && String(chat.assigneeId) === String(user.chatwoot_id));
+  };
+
+  const isActiveChat = (chat: Chat) => {
+    const status = chat.status || (chat as any).statusP;
+    return status !== 'concluido' && status !== 'resolved';
+  };
+
+  const isHistoryChat = (chat: Chat) => {
+    const status = chat.status || (chat as any).statusP;
+    return status === 'concluido' || status === 'resolved';
+  };
+
   // [DEBUG] Diagnóstico de permissão do usuário logado (visível no console F12)
   if (user) console.debug('[Atendimentos] user:', { role: user.role, area: user.area, userSectorKey, chatwoot_id: user.chatwoot_id });
 
@@ -480,7 +519,7 @@ const Atendimentos = () => {
 
   // Auto-detecção de CPF nas mensagens
   useEffect(() => {
-    if (!selectedChat || !messagesData || messagesData.length === 0 || cdClienteMK) return;
+    if (!selectedChat || !messagesData?.messages || messagesData.messages.length === 0 || cdClienteMK) return;
 
     // Valida CPF real (checksum oficial)
     const isValidCPF = (digits: string): boolean => {
@@ -534,7 +573,7 @@ const Atendimentos = () => {
     // 6) 14 dígitos puros isolados
     const digitos14 = /(?<!\d)(\d{14})(?!\d)/g;
 
-    const contentPool = [...messagesData].reverse().slice(0, 50);
+    const contentPool = [...messagesData.messages].reverse().slice(0, 50);
     const candidates: string[] = [];
 
     // Primeiro: coleta CPFs formatados (alta confiança)
@@ -640,12 +679,24 @@ const Atendimentos = () => {
             ''
           ) : '';
           if (cd) {
-            console.log('[Auto-CPF] Cliente encontrado:', cd, first?.nome, 'CPF:', cpf);
+            const clienteDoc = mapClienteMK(first);
+            console.log('[Auto-CPF] Cliente encontrado:', cd, clienteDoc.nome, 'CPF:', cpf);
             if (!cancelled) {
               setChatMKMap(prev => ({
                 ...prev,
-                [selectedChat]: { cd, cliente: first as MKClienteDoc }
+                [selectedChat]: { cd, cliente: clienteDoc }
               }));
+              // Persistir identidade no Supabase para exibição nos cards
+              const chatRaw = (chatsData || []).find((c: any) => String(c.id || c.conversation_id) === selectedChat);
+              const chatPhone = (chatRaw as any)?.contact?.phone_number || chatRaw?.phone || '';
+              if (chatPhone && clienteDoc.nome && chatPhone.replace(/\D/g, '').length >= 10) {
+                saveClientIdentityMutation.mutate({
+                  phoneNumber: chatPhone,
+                  cpf,
+                  cdCliente: cd,
+                  nomeMK: clienteDoc.nome,
+                });
+              }
             }
             return;
           }
@@ -657,7 +708,7 @@ const Atendimentos = () => {
     })();
 
     return () => { cancelled = true; };
-  }, [selectedChat, messagesData, cdClienteMK]);
+  }, [selectedChat, messagesData, cdClienteMK, chatsData, saveClientIdentityMutation]);
 
   // Garantir que chats é sempre um array e normalizar os dados
   // O n8n pode retornar um objeto único ou um array
@@ -738,18 +789,116 @@ const Atendimentos = () => {
       });
   })();
 
+  const myActiveChats = chats.filter(chat => isAssignedToMe(chat) && isActiveChat(chat));
+  const myHistoryChats = chats.filter(chat => isAssignedToMe(chat) && isHistoryChat(chat));
+  const myChatsCount = myActiveChats.length;
+
+  const fetchLastTransferInfo = async (chatId: string) => {
+    try {
+      const { data } = await supabase
+        .from('audit_logs')
+        .select('user_id, user_email, user_role, user_area, details, created_at')
+        .eq('action', 'chat_transfer')
+        .eq('target_id', chatId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const log = data?.[0];
+      if (!log) return null;
+      const name = log.user_email?.split('@')[0] || 'Operador';
+      const area = (() => {
+        if (log.user_area) {
+          return log.user_area.charAt(0).toUpperCase() + log.user_area.slice(1);
+        }
+        return log.details?.toSector || '';
+      })();
+      const fromAgentId = log.details?.fromAgentId ?? null;
+      const toAgentId = log.details?.toAgentId ?? null;
+      const fromUserId = log.user_id ?? null;
+      return { name, area, fromAgentId, toAgentId, fromUserId };
+    } catch (err) {
+      console.error('[TransferNotification] Erro ao buscar log:', err);
+      return null;
+    }
+  };
+
+  // Notificações de transferência para o operador logado
+  useEffect(() => {
+    if (!user?.chatwoot_id) return;
+
+    const currentIds = new Set(myActiveChats.map(chat => chat.id));
+
+    if (isInitialMyChatsLoadRef.current) {
+      isInitialMyChatsLoadRef.current = false;
+      previousMyChatsRef.current = currentIds;
+      return;
+    }
+
+    const previousIds = previousMyChatsRef.current;
+    const newIds = Array.from(currentIds).filter(id => !previousIds.has(id));
+
+    newIds.forEach(async (chatId) => {
+      if (notifiedTransferIds.has(chatId)) return;
+      const chat = myActiveChats.find(c => c.id === chatId);
+      if (!chat) return;
+
+      const transferInfo = await fetchLastTransferInfo(chatId);
+      // Só notifica transferências de operador para operador (ignora interferência/auto-atribuição)
+      if (!transferInfo) return;
+      const isOperatorToOperator =
+        String(transferInfo.toAgentId) === String(user.chatwoot_id) &&
+        transferInfo.fromAgentId !== null &&
+        String(transferInfo.fromAgentId) !== String(user.chatwoot_id);
+      // Fallback para logs antigos sem fromAgentId: comparar user_id/email do log com o usuário atual
+      const isSelfAction =
+        transferInfo.fromUserId === user.id ||
+        transferInfo.name === (user.email?.split('@')[0] || '');
+      if (!isOperatorToOperator || isSelfAction) return;
+
+      setNotifiedTransferIds(prev => new Set([...prev, chatId]));
+
+      toast.info(
+        <div className="flex flex-col gap-1">
+          <span className="font-semibold text-sm">Atendimento transferido para você</span>
+          <span className="text-xs">{formatClientName(chat)} · {formatPhoneNumber(chat.phone, chat.id)}</span>
+          <span className="text-[11px] text-muted-foreground">
+            Transferido por {transferInfo.name} {transferInfo.area ? `· ${transferInfo.area}` : ''}
+          </span>
+        </div>,
+        {
+          duration: 10000,
+          action: {
+            label: 'Visualizar',
+            onClick: () => {
+              setMyChatsMode(true);
+              setMyChatsTab('ativos');
+              setSelectedChat(chatId);
+            },
+          },
+          closeButton: true,
+        }
+      );
+    });
+
+    previousMyChatsRef.current = currentIds;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myActiveChats, user?.chatwoot_id]);
+
+  // Informação de quem transferiu o chat vem da timeline de mensagens do Chatwoot
+  const selectedChatTransferInfo = (() => {
+    if (!selectedChat) return null;
+    const currentChat = chats.find(chat => chat.id === selectedChat);
+    if (!currentChat || !isAssignedToMe(currentChat)) return null;
+    const info = messagesData?.transferInfo;
+    if (!info || !info.toName) return null;
+    return {
+      name: info.fromName || 'Operador',
+      area: '',
+    };
+  })();
+
   // Garantir que messages é sempre um array também e normalizar
   const messages = (() => {
-    if (!messagesData) return [];
-
-    let rawMessages: any[] = [];
-    if (Array.isArray(messagesData)) {
-      rawMessages = messagesData;
-    } else if (messagesData && (messagesData as any).payload) {
-      rawMessages = (messagesData as any).payload;
-    } else if (messagesData) {
-      rawMessages = [messagesData];
-    }
+    const rawMessages = messagesData?.messages || [];
 
     return rawMessages
       .map((msg, idx) => {
@@ -773,6 +922,20 @@ const Atendimentos = () => {
         return (isNaN(timeA) || isNaN(timeB)) ? 0 : timeA - timeB;
       });
   })();
+
+  // Buscar identidades de clientes já identificadas por telefone
+  const chatPhones = useMemo(() => {
+    return (chats || [])
+      .map((chat: any) => chat.phone || chat.clientPhone || chat.id)
+      .filter(Boolean) as string[];
+  }, [chats]);
+
+  const { data: identitiesMap = new Map<string, ClientIdentity>() } = useClientIdentitiesForPhones(chatPhones);
+
+  const getChatIdentity = (chat: any): ClientIdentity | undefined => {
+    const phone = chat?.phone || chat?.clientPhone || chat?.id;
+    return identitiesMap.get(normalizePhone(phone));
+  };
 
   // Gerenciamento de "unread" local (corrige quando API do Chatwoot zera indevidamente)
   useEffect(() => {
@@ -1301,6 +1464,13 @@ const Atendimentos = () => {
 
   // Filtrar chats por permissão de setor, status e busca
   const filteredChats = chats.filter(chat => {
+    // 0. FILTRO "MEUS ATENDIMENTOS"
+    if (myChatsMode) {
+      if (!isAssignedToMe(chat)) return false;
+      if (myChatsTab === 'ativos' && !isActiveChat(chat)) return false;
+      if (myChatsTab === 'historico' && !isHistoryChat(chat)) return false;
+    }
+
     // 1. REGRA DE VISIBILIDADE (Privacidade de Setor)
     const chatLabels = chat.labels || [];
     const isTriagem = isTriagemChat(chatLabels);
@@ -1343,14 +1513,16 @@ const Atendimentos = () => {
       if (chatStatus !== statusFilter) return false;
     }
 
-    // 3. FILTRO DE BUSCA (nome, telefone)
+    // 3. FILTRO DE BUSCA (nome, telefone, nome do MK)
     if (searchQuery.trim() !== '') {
       const query = searchQuery.toLowerCase();
       const clientName = formatClientName(chat).toLowerCase();
       const phoneNumber = formatPhoneNumber(chat.phone, chat.id);
       const rawPhone = (chat.id || '').replace(/\D/g, '');
+      const mkName = getChatIdentity(chat)?.nome_mk?.toLowerCase() || '';
 
       if (!(clientName.includes(query) ||
+        mkName.includes(query) ||
         phoneNumber.includes(query) ||
         rawPhone.includes(query) ||
         (chat.lastMessage || '').toLowerCase().includes(query))) {
@@ -1557,7 +1729,8 @@ const Atendimentos = () => {
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
-                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    disabled={myChatsMode}
+                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
                   >
                     <option value="active">Status: Em andamento</option>
                     <option value="concluido">Status: Concluído</option>
@@ -1569,7 +1742,8 @@ const Atendimentos = () => {
                   <select
                     value={sectorFilter}
                     onChange={(e) => setSectorFilter(e.target.value)}
-                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20"
+                    disabled={myChatsMode}
+                    className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
                   >
                     {isAdminOrMaster ? (
                       <>
@@ -1593,6 +1767,65 @@ const Atendimentos = () => {
                     )}
                   </select>
                 </div>
+
+                {/* Botão Meus Atendimentos */}
+                {user?.chatwoot_id && (
+                  <div className="flex flex-col gap-1.5">
+                    <Button
+                      variant={myChatsMode ? "default" : "outline"}
+                      size="sm"
+                      className={cn(
+                        "h-8 px-2 text-[11px] flex items-center justify-center gap-1.5 w-full",
+                        myChatsMode ? "bg-primary text-white hover:bg-primary/90" : "border-primary text-primary hover:bg-primary/5"
+                      )}
+                      onClick={() => {
+                        if (myChatsMode) {
+                          setMyChatsMode(false);
+                        } else {
+                          setMyChatsMode(true);
+                          setMyChatsTab('ativos');
+                          setStatusFilter('all');
+                          setSectorFilter('all');
+                          setAssignmentFilter('all');
+                        }
+                      }}
+                    >
+                      <Inbox className="w-4 h-4" />
+                      <span>Meus atendimentos</span>
+                      {myChatsCount > 0 && (
+                        <span className={cn(
+                          "ml-1 text-[10px] font-bold rounded-full px-1.5 py-0 min-w-[1.25rem] text-center",
+                          myChatsMode ? "bg-white text-primary" : "bg-primary text-white"
+                        )}>
+                          {myChatsCount}
+                        </span>
+                      )}
+                    </Button>
+
+                    {myChatsMode && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant={myChatsTab === 'ativos' ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 flex-1 text-[10px] px-1"
+                          onClick={() => setMyChatsTab('ativos')}
+                        >
+                          <Inbox className="w-3.5 h-3.5 mr-1" />
+                          Ativos ({myActiveChats.length})
+                        </Button>
+                        <Button
+                          variant={myChatsTab === 'historico' ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 flex-1 text-[10px] px-1"
+                          onClick={() => setMyChatsTab('historico')}
+                        >
+                          <History className="w-3.5 h-3.5 mr-1" />
+                          Histórico ({myHistoryChats.length})
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {showAdvancedFilters && (
                   <div className="grid grid-cols-2 gap-1.5 rounded-lg border bg-muted/20 p-2">
                     <select
@@ -1749,6 +1982,15 @@ const Atendimentos = () => {
                                 <div className="flex-1 min-w-0">
                                   <h4 className="text-sm font-medium truncate">
                                     {formatClientName(chat)}
+                                    {(() => {
+                                      const identity = getChatIdentity(chat);
+                                      if (!identity?.nome_mk) return null;
+                                      return (
+                                        <span className="ml-2 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary border border-primary/20">
+                                          {identity.nome_mk}
+                                        </span>
+                                      );
+                                    })()}
                                   </h4>
                                   <p className="text-xs text-muted-foreground truncate">
                                     {formatPhoneNumber(chat.phone, chat.id)}
@@ -1957,6 +2199,15 @@ const Atendimentos = () => {
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <h3 className="font-semibold text-sm sm:text-base truncate max-w-[120px] sm:max-w-[180px] md:max-w-none">
                             {formatClientName(selectedChatData)}
+                            {(() => {
+                              const identity = getChatIdentity(selectedChatData);
+                              if (!identity?.nome_mk) return null;
+                              return (
+                                <span className="ml-2 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary border border-primary/20">
+                                  {identity.nome_mk}
+                                </span>
+                              );
+                            })()}
                           </h3>
                           {selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento') && (
                             <Badge className="bg-red-500 hover:bg-red-600 text-white text-[8px] sm:text-[9px] animate-pulse border-none px-1 py-0 flex-shrink-0">
@@ -2376,7 +2627,24 @@ const Atendimentos = () => {
                         </div>
                       </div>
                     ) : (
-                      messages.map((message, index) => {
+                      <>
+                        {(() => {
+                          const currentChat = selectedChat ? chats.find(chat => chat.id === selectedChat) : null;
+                          if (!currentChat || !isAssignedToMe(currentChat)) return null;
+                          return (
+                            <div className="flex justify-center my-3">
+                              <div className="bg-blue-50/80 text-blue-700 text-[11px] font-medium italic px-4 py-1.5 rounded-full text-center shadow-sm max-w-[85%] border border-blue-200/60 flex items-center gap-1.5">
+                                <UserCheck className="w-3.5 h-3.5" />
+                                <span>
+                                  {selectedChatTransferInfo
+                                    ? <>Atendimento transferido para você por {selectedChatTransferInfo.name}{selectedChatTransferInfo.area ? ` · ${selectedChatTransferInfo.area}` : ''}</>
+                                    : <>Atendimento atribuído a você</>}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        {messages.map((message, index) => {
                         // Corrigir: sender pode ser 'user' (cliente) ou 'agent' (agente)
                         const isClient = message.sender === 'user' || message.sender === 'client';
                         const isAgent = message.sender === 'agent' || message.sender === 'ai';
@@ -2453,17 +2721,10 @@ const Atendimentos = () => {
                         const isLastMessage = index === messages.length - 1;
 
                         if (message.sender === 'activity') {
-                          let activityContent = message.content || '';
-                          if (activityContent.includes('Gabriel Souza') || activityContent.includes('gabrieldesouza100')) {
-                            // Se a conversa tem um responsável humano, atribuímos a ação a ele. Se não, foi o sistema.
-                            const operatorNameToShow = selectedChatData?.assigneeName || 'Sistema';
-                            activityContent = activityContent.replace(/Gabriel Souza|gabrieldesouza100/g, operatorNameToShow);
-                          }
-
                           return (
                             <div key={message.id} ref={isLastMessage ? lastMessageRef : null} className="flex justify-center my-3">
                               <div className="bg-[#f0f4f8]/80 text-[#8696a0] text-[11px] font-medium italic px-4 py-1.5 rounded-full text-center shadow-sm max-w-[85%] border border-[#e1e8ed]/60">
-                                {activityContent}
+                                {message.content || ''}
                               </div>
                             </div>
                           );
@@ -2504,14 +2765,19 @@ const Atendimentos = () => {
                               {/* Balão de mensagem estilo WhatsApp */}
                               <div className={cn(
                                 "px-3 py-2 rounded-lg shadow-sm relative",
-                                message.type === 'document'
+                                message.isPrivate
                                   ? cn(
-                                    "bg-[#f0f4f8] border border-[#d0d8e0]",
+                                    "bg-yellow-50 border border-yellow-300 rounded-tr-none",
                                     isClient ? "rounded-tl-none" : "rounded-tr-none"
-                                  ) // Fundo diferente para documentos
-                                  : isClient
-                                    ? "bg-white text-[#111b21] rounded-tl-none" // Branco para cliente (esquerda)
-                                    : "bg-[#d9e5ff] text-[#111b21] rounded-tr-none", // Azul claro para agente (direita)
+                                  )
+                                  : message.type === 'document'
+                                    ? cn(
+                                      "bg-[#f0f4f8] border border-[#d0d8e0]",
+                                      isClient ? "rounded-tl-none" : "rounded-tr-none"
+                                    ) // Fundo diferente para documentos
+                                    : isClient
+                                      ? "bg-white text-[#111b21] rounded-tl-none" // Branco para cliente (esquerda)
+                                      : "bg-[#d9e5ff] text-[#111b21] rounded-tr-none", // Azul claro para agente (direita)
                                 // Ajusta o rabinho baseado no agrupamento
                                 message.type !== 'document' && isSameSender && (
                                   isClient
@@ -2520,8 +2786,13 @@ const Atendimentos = () => {
                                 )
                               )}>
                                 {/* Nome do operador que enviou */}
-                                {showAgentName && (
-                                  <p className="text-[11px] font-semibold text-[#1b72e8] mb-0.5">{displaySenderName}</p>
+                                {(showAgentName || message.isPrivate) && (
+                                  <p className={cn(
+                                    "text-[11px] font-semibold mb-0.5",
+                                    message.isPrivate ? "text-yellow-700" : "text-[#1b72e8]"
+                                  )}>
+                                    {message.isPrivate ? `Nota interna — ${displaySenderName || 'Operador'}` : displaySenderName}
+                                  </p>
                                 )}
                                 {/* Renderizar conteúdo baseado no tipo */}
                                 {(() => {
@@ -2710,7 +2981,8 @@ const Atendimentos = () => {
                             </div>
                           </div>
                         );
-                      })
+                      })}
+                      </>
                     )}
                   </div>
 

@@ -40,7 +40,7 @@ export function NotificationBell({
 
   const handleClickNotification = (notif: TransferNotification) => {
     markAsRead(notif.id);
-    navigate('/atendimentos');
+    navigate('/atendimentos', { state: { openChatId: notif.chatId } });
   };
 
   return (
@@ -64,7 +64,7 @@ export function NotificationBell({
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 p-0 shadow-lg"
+        className="w-80 p-0 shadow-lg bg-background border border-border"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">

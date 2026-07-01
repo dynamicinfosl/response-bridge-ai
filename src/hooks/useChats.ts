@@ -86,20 +86,41 @@ const translateSystemMessage = (content: string): string => {
   }
 
   if (lower.includes('atribuído a') || lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
-    // Tenta extrair quem recebeu a atribuição (o operador que interviu)
-    // Padrão: "Atribuído a [Operador] por [Administrador]"
-    const matchBy = content.match(/atribuído a (.*) por (.*)/i);
-    if (matchBy) return `${matchBy[1]} interviu em uma conversa`;
+    // Padrão: "[Operador] atribuiu a si mesmo essa conversa"
+    const matchSelf = content.match(/(.+?) atribuiu a si mesmo essa conversa/i);
+    if (matchSelf) {
+      return `${matchSelf[1].trim()} interviu em uma conversa`;
+    }
 
-    // Padrão: "Atribuído a [Operador]"
-    const matchSimple = content.match(/atribuído a (.*)/i);
-    if (matchSimple) return `${matchSimple[1]} interviu em uma conversa`;
+    // Padrão: "Atribuído a [Destinatário] por [Quem transferiu]"
+    const matchBy = content.match(/atribuído a (.+?) por (.+)/i);
+    if (matchBy) {
+      const toName = matchBy[1].trim();
+      const fromName = matchBy[2].trim();
+      if (fromName && fromName.toLowerCase() !== toName.toLowerCase()) {
+        return `${fromName} transferiu a conversa para ${toName}`;
+      }
+      return `${toName} interviu em uma conversa`;
+    }
 
-    // Padrão: "[Administrador] atribuiu a conversa a [Operador]"
-    const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
-    if (matchAtribuiu) return `${matchAtribuiu[2]} interviu em uma conversa`;
+    // Padrão: "[Quem transferiu] atribuiu a conversa a [Destinatário]"
+    const matchAtribuiu = content.match(/(.+?) atribuiu a conversa a (.+)/i);
+    if (matchAtribuiu) {
+      const fromName = matchAtribuiu[1].trim();
+      const toName = matchAtribuiu[2].trim();
+      if (fromName.toLowerCase() !== toName.toLowerCase()) {
+        return `${fromName} transferiu a conversa para ${toName}`;
+      }
+      return `${toName} interviu em uma conversa`;
+    }
 
-    return 'Atendimento transferido de operador';
+    // Padrão: "Atribuído a [Operador]" (sem "por" — auto-atribuição/intervenção)
+    const matchSimple = content.match(/atribuído a (.+)/i);
+    if (matchSimple) return `${matchSimple[1].trim()} interviu em uma conversa`;
+
+    // Fallback: loga o conteúdo não reconhecido para depuração
+    console.warn('[translateSystemMessage] padrão não reconhecido:', JSON.stringify(content));
+    return content;
   }
 
   if (lower.includes('marcad') && lower.includes('como resolvid') || lower.includes('marked as resolved')) {
@@ -230,6 +251,7 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
       finalContent = msg.content || '';
     } else {
       finalSender = 'activity';
+      console.log('[DEBUG activity msg raw]', JSON.stringify(msg.content));
       finalContent = translateSystemMessage(finalContent);
     }
   } else if (msg.private) {
@@ -250,6 +272,7 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
     media,
     timestamp: new Date(msg.created_at * 1000).toISOString(),
     read: true,
+    isPrivate: !!msg.private,
   };
 };
 
@@ -504,11 +527,17 @@ export function useChats() {
   });
 }
 
+interface UseMessagesResult {
+  messages: Message[];
+  transferInfo?: { fromName: string; toName: string; timestamp: string };
+}
+
 export function useMessages(chatId: string | null) {
-  return useQuery({
+  return useQuery<UseMessagesResult, Error, UseMessagesResult, ['messages', string | null]>({
     queryKey: ['messages', chatId],
-    queryFn: async () => {
-      if (!chatId) return [];
+    queryFn: async ({ queryKey }) => {
+      const [, id] = queryKey;
+      if (!id) return { messages: [], transferInfo: undefined };
 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -528,18 +557,18 @@ export function useMessages(chatId: string | null) {
       );
 
       // Chatwoot retorna { payload: [...] } ou { data: { payload: [...] } } via proxy
-      const messages = (response as any).data?.payload || (response as any).payload || (Array.isArray(response) ? response : []);
+      const rawMessages = (response as any).data?.payload || (response as any).payload || (Array.isArray(response) ? response : []);
 
-      if (!Array.isArray(messages)) {
+      if (!Array.isArray(rawMessages)) {
         console.error('Chatwoot messages is not an array:', response);
-        return [];
+        return { messages: [], transferInfo: undefined };
       }
 
       // ID do admin cujo token de API é usado para TODAS as mensagens (bot + humanos)
       const ADMIN_SENDER_ID = '1';
 
       // Ordena cronologicamente para construir a timeline
-      const sortedRaw = [...messages].sort((a: any, b: any) => a.created_at - b.created_at);
+      const sortedRaw = [...rawMessages].sort((a: any, b: any) => a.created_at - b.created_at);
 
       // ===== TIMELINE: detectar períodos de intervenção humana =====
       // Quando "agente-off" é adicionado, o bot para e um humano assume.
@@ -596,7 +625,30 @@ export function useMessages(chatId: string | null) {
         return undefined;
       };
 
-      return sortedRaw.map((msg: any) => {
+      // Detectar a informação de transferência mais recente (atribuição de operador)
+      let lastTransferInfo: { fromName: string; toName: string; timestamp: string } | undefined = undefined;
+      for (let i = sortedRaw.length - 1; i >= 0; i--) {
+        const msg = sortedRaw[i];
+        if (msg.message_type !== 2 || msg.private) continue;
+        const content = msg.content || '';
+        if (/atribuído a/i.test(content)) {
+          const matchBy = content.match(/atribuído a (.+?) por/i);
+          const matchSimple = content.match(/atribuído a (.+)/i);
+          const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
+          const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || '').trim();
+          const fromName = matchBy?.[2]?.trim() || matchAtribuiu?.[1]?.trim() || '';
+          if (toName) {
+            lastTransferInfo = {
+              fromName,
+              toName,
+              timestamp: new Date(msg.created_at * 1000).toISOString(),
+            };
+            break;
+          }
+        }
+      }
+
+      const messages = sortedRaw.map((msg: any) => {
         const mapped = mapChatwootToMessage(msg);
 
         if (msg.message_type === 1 && msg.sender?.id) {
@@ -606,11 +658,15 @@ export function useMessages(chatId: string | null) {
           if (msg.content_attributes?.sender_name) {
             mapped.senderName = msg.content_attributes.sender_name;
           }
-          // 2. sender.id NÃO é o admin → foi enviado direto do Chatwoot por um operador real
+          // 2. Mensagens privadas (notas internas) usam o nome real do sender
+          else if (msg.private) {
+            mapped.senderName = humanNameById.get(sid) || msg.sender.name;
+          }
+          // 3. sender.id NÃO é o admin → foi enviado direto do Chatwoot por um operador real
           else if (sid !== ADMIN_SENDER_ID && humanChatwootIds.has(sid)) {
             mapped.senderName = humanNameById.get(sid) || msg.sender.name;
           }
-          // 3. sender.id É o admin → verificar timeline de intervenção
+          // 4. sender.id É o admin → verificar timeline de intervenção
           else if (sid === ADMIN_SENDER_ID) {
             const operator = getInterventionOperator(msg.created_at);
             if (operator) {
@@ -621,13 +677,18 @@ export function useMessages(chatId: string | null) {
               mapped.senderName = undefined;
             }
           }
-          // 4. Fallback: sem nome (bot)
+          // 5. Fallback: sem nome (bot)
           else {
             mapped.senderName = undefined;
           }
         }
         return mapped;
       });
+
+      return {
+        messages,
+        transferInfo: lastTransferInfo,
+      };
     },
     enabled: !!chatId,
     refetchInterval: 3000,
@@ -720,7 +781,7 @@ export function useReactivateAI() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, labels }: { id: string; labels: string[] }) => {
+    mutationFn: async ({ id, labels }: { id: string; labels: string[] }) => {
       const filteredLabels = (labels || []).filter(l =>
         l.toLowerCase() !== 'precisa_atendimento' &&
         l.toLowerCase() !== 'fora_exp_intervencao' &&
@@ -728,7 +789,9 @@ export function useReactivateAI() {
         l.toLowerCase() !== 'agente-off'
       );
 
-      return chatwootAPI.addLabel(Number(id), filteredLabels);
+      await chatwootAPI.addLabel(Number(id), filteredLabels);
+      // Remove o operador atribuído para que a IA volte a ser responsável
+      await chatwootAPI.unassignAgent(Number(id));
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });

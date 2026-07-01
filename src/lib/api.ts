@@ -113,7 +113,7 @@ export interface Message {
   id: string;
   chatId: string;
   content?: string;
-  sender: 'user' | 'agent' | 'activity';
+  sender: 'user' | 'agent' | 'activity' | 'client' | 'ai';
   senderName?: string;
   type?: 'text' | 'document' | 'audio' | 'image' | 'video';
   media?: {
@@ -122,6 +122,7 @@ export interface Message {
   };
   timestamp: string;
   read?: boolean;
+  isPrivate?: boolean;
 }
 
 export interface SendMessagePayload {

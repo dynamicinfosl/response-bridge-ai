@@ -24,7 +24,7 @@ export const Layout = ({ children }: LayoutProps) => {
     chats,
     myId: user?.chatwoot_id,
     userId: user?.id,
-    onNavigateToChat: () => navigate('/atendimentos'),
+    onNavigateToChat: (chatId: string) => navigate('/atendimentos', { state: { openChatId: chatId } }),
   });
 
   const toggleMobileMenu = () => {
