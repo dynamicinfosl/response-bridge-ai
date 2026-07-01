@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 import type { Chat } from '@/lib/api';
 
 export interface TransferNotification {
@@ -111,6 +112,21 @@ export function useTransferNotification({
     requestPushPermission();
   }, []);
 
+  const getLastTransferLog = useCallback(async (chatId: string) => {
+    try {
+      const { data } = await supabase
+        .from('audit_logs')
+        .select('user_id, details, created_at')
+        .eq('action', 'chat_transfer')
+        .eq('target_id', chatId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return data?.[0] || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!chats || !myId || !userId) {
       if (chats) isFirstRender.current = false;
@@ -126,8 +142,6 @@ export function useTransferNotification({
       return;
     }
 
-    const newNotifications: TransferNotification[] = [];
-
     chats.forEach(chat => {
       const prev = prevAssigneeMap.current.get(chat.id);
       const curr = chat.assigneeId;
@@ -141,35 +155,58 @@ export function useTransferNotification({
         notifiedChats.current.add(chat.id);
         setTimeout(() => notifiedChats.current.delete(chat.id), 30000);
 
-        const clientName = chat.name || `Conversa #${chat.id}`;
+        const clientName = chat.client || chat.phone || `Conversa #${chat.id}`;
 
-        // Toast
-        toast.success(`📩 Atendimento transferido para você`, {
-          description: `${clientName} — clique para abrir`,
-          duration: 8000,
-          action: onNavigateToChat
-            ? {
-                label: 'Abrir',
-                onClick: () => onNavigateToChat(chat.id),
-              }
-            : undefined,
+        // Só notifica se a última transferência foi de outro operador para este usuário
+        getLastTransferLog(chat.id).then(log => {
+          if (!log) {
+            // Sem log: provavelmente auto-atribuição/interferência — não notifica
+            return;
+          }
+          const toAgentId = log.details?.toAgentId ?? null;
+          const fromAgentId = log.details?.fromAgentId ?? null;
+          const isFromAnotherOperator =
+            fromAgentId !== null &&
+            String(fromAgentId) !== String(myId);
+          const isDestinedToMe = String(toAgentId) === String(myId);
+          const isNotSelfAction = log.user_id !== userId;
+
+          if (!isDestinedToMe || !isFromAnotherOperator || !isNotSelfAction) {
+            return;
+          }
+
+          // Toast
+          toast.success(`📩 Atendimento transferido para você`, {
+            description: `${clientName} — clique para abrir`,
+            duration: 8000,
+            action: onNavigateToChat
+              ? {
+                  label: 'Abrir',
+                  onClick: () => onNavigateToChat(chat.id),
+                }
+              : undefined,
+          });
+
+          // Push
+          sendPushNotification(clientName);
+
+          // Sound
+          playAlertSound();
+
+          // Add to history
+          const notif: TransferNotification = {
+            id: `${chat.id}_${Date.now()}`,
+            chatId: chat.id,
+            clientName,
+            timestamp: Date.now(),
+            read: false,
+          };
+          setNotifications(prev => {
+            const merged = [notif, ...prev].slice(0, MAX_NOTIFICATIONS);
+            saveNotifications(userId, merged);
+            return merged;
+          });
         });
-
-        // Push
-        sendPushNotification(clientName);
-
-        // Sound
-        playAlertSound();
-
-        // Add to history
-        const notif: TransferNotification = {
-          id: `${chat.id}_${Date.now()}`,
-          chatId: chat.id,
-          clientName,
-          timestamp: Date.now(),
-          read: false,
-        };
-        newNotifications.push(notif);
       }
 
       prevAssigneeMap.current.set(chat.id, curr);
@@ -182,15 +219,7 @@ export function useTransferNotification({
         prevAssigneeMap.current.delete(key);
       }
     }
-
-    if (newNotifications.length > 0) {
-      setNotifications(prev => {
-        const merged = [...newNotifications, ...prev].slice(0, MAX_NOTIFICATIONS);
-        saveNotifications(userId, merged);
-        return merged;
-      });
-    }
-  }, [chats, myId, userId, onNavigateToChat]);
+  }, [chats, myId, userId, onNavigateToChat, getLastTransferLog]);
 
   const markAsRead = useCallback((id: string) => {
     setNotifications(prev => {

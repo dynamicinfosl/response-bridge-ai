@@ -17,6 +17,7 @@ import {
   Tag
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { chatwootAPI, type ChatwootAgent } from '@/lib/chatwoot';
 import { useTransferChat } from '@/hooks/useChats';
 import { logAuditAction } from '@/lib/audit';
@@ -38,6 +39,7 @@ export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAtte
   const [loading, setLoading] = useState(false);
 
   const { toast } = useToast();
+  const { user } = useAuth();
   const transferMutation = useTransferChat();
 
   const sectors = [
@@ -100,7 +102,11 @@ export const TransferModal = ({ isOpen, onClose, clientName, chatId, currentAtte
       
       await logAuditAction('chat_transfer', {
         toAgent: targetAgent || null,
+        toAgentId: selectedAgent ? Number(selectedAgent) : null,
         toSector: targetSector || null,
+        fromAgent: user?.name || user?.email || null,
+        fromAgentId: user?.chatwoot_id || null,
+        fromSector: user?.area || null,
         note: transferNote || null,
         clientName
       }, 'chat', chatId);
