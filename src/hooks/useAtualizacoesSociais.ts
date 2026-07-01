@@ -145,32 +145,38 @@ async function fetchVistas(token: string): Promise<Vista[]> {
   return res.json();
 }
 
-async function marcarVisto(data: { atualizacao_id: string; user_id: string }, token: string): Promise<Vista> {
+async function marcarVisto(data: { atualizacao_id: string; user_id: string }, token: string): Promise<Vista | null> {
   if (!supabaseUrl || !anonKey) throw new Error('Supabase ENV não configurado');
+
+  const existingRes = await fetch(
+    `${supabaseUrl}/rest/v1/atualizacoes_vistas?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}&select=id&limit=1`,
+    { headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+  );
+
+  if (existingRes.ok) {
+    const existingRows = await existingRes.json();
+    if (Array.isArray(existingRows) && existingRows.length > 0) return null;
+  }
 
   const res = await fetch(`${supabaseUrl}/rest/v1/atualizacoes_vistas`, {
     method: 'POST',
-    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
     body: JSON.stringify(data),
   });
 
-  if (res.ok) {
-    const rows = await res.json();
-    return rows[0];
+  if (res.status === 409) return null;
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Visto HTTP ${res.status}: ${errText}`);
   }
 
-  const errText = await res.text();
-  // Se erro de chave duplicada, buscar e retornar o registro existente
-  if (errText.includes('duplicate') || errText.includes('23505') || res.status === 409) {
-    const getRes = await fetch(
-      `${supabaseUrl}/rest/v1/atualizacoes_vistas?atualizacao_id=eq.${data.atualizacao_id}&user_id=eq.${data.user_id}&select=*&limit=1`,
-      { headers: { apikey: anonKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-    const rows = await getRes.json();
-    return rows[0];
-  }
-
-  throw new Error(`Visto HTTP ${res.status}: ${errText}`);
+  return null;
 }
 
 async function updateVista(data: { atualizacao_id: string; user_id: string; curtido?: boolean; comentou?: boolean }, token: string): Promise<Vista> {

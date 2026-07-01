@@ -131,6 +131,14 @@ export function UpdatePopup() {
         console.error('Erro ao marcar visto:', err);
       }
     }
+    // Sincroniza o sino (UpdateNotificationBell usa localStorage)
+    const latest = list.reduce((prev, cur) => {
+      const prevTs = prev.published_at || prev.created_at;
+      const curTs = cur.published_at || cur.created_at;
+      return new Date(curTs) > new Date(prevTs) ? cur : prev;
+    });
+    const latestTs = latest.published_at || latest.created_at;
+    try { localStorage.setItem('updates_last_seen_at', latestTs); } catch { /* ignore */ }
   };
 
   const handleNext = async () => {
