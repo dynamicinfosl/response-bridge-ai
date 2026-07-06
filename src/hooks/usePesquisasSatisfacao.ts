@@ -33,7 +33,7 @@ export function usePesquisasSatisfacao() {
           setTimeout(() => reject(new Error('Timeout de 10s atingido ao buscar pesquisas de satisfação.')), 10000)
         );
 
-        const req = fetch(`${supabaseUrl}/rest/v1/pesquisas_satisfacao?select=*&order=created_at.desc`, {
+        const req = fetch(`${supabaseUrl}/rest/v1/pesquisas_satisfacao?select=id,status,nota,created_at&order=created_at.desc&limit=5000`, {
           headers: {
             apikey: anonKey,
             Authorization: `Bearer ${anonKey}`,
