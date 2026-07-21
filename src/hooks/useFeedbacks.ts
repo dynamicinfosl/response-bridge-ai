@@ -16,9 +16,16 @@ export interface Feedback {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+function getProjectRef() {
+  const url = import.meta.env.VITE_SUPABASE_URL || '';
+  const match = url.match(/https:\/\/([^.]+)\.supabase/);
+  return match ? match[1] : '';
+}
+
 function getToken() {
   try {
-    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    const projectRef = getProjectRef();
+    const stored = localStorage.getItem(`sb-${projectRef}-auth-token`);
     if (stored) {
       const parsed = JSON.parse(stored);
       return parsed?.access_token || anonKey;
@@ -82,7 +89,8 @@ export function useFeedbacks() {
   return useQuery({
     queryKey: ['feedbacks'],
     queryFn: () => fetchFeedbacks(getToken()),
-    refetchInterval: 60000,
+    staleTime: 60000 * 5, // Cache por 5 minutos
+    refetchOnWindowFocus: false,
   });
 }
 

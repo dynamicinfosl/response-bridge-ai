@@ -322,7 +322,7 @@ export function useChats() {
 
         // ---------- Buscar conversas via Edge Function (rápido, com cache) ----------
         const edgeFunctionUrl = `${supabaseUrl}/functions/v1/chatwoot-sync`;
-        const conversationsFetch = fetchJsonWithTimeout(edgeFunctionUrl, {
+        const conversations = await fetchJsonWithTimeout(edgeFunctionUrl, {
           headers: { 'Content-Type': 'application/json' }
         }, 15000).then((json: any) => {
           const convs = json?.conversations;
@@ -334,28 +334,50 @@ export function useChats() {
           return convs;
         });
 
-        // ---------- Buscar dados auxiliares do Supabase em paralelo ----------
-        const supabaseFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id_conversa_chatwoot,mini_resumo&order=id.desc&limit=500`, {
+        // Extrair IDs de conversas visíveis para filtrar as consultas adicionais (otimização de egress)
+        const visibleChatIds = conversations.map((c: any) => String(c.id || c.conversation_id || ''));
+
+        // ---------- Buscar atendimentos escalados (com limite reduzido para otimização de egress) ----------
+        const escalados = await safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,telefone,nome,mini_resumo,created_at&order=created_at.desc&limit=100`, {
           headers: supabaseHeaders
         }, 6000);
 
-        const escaladosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,telefone,nome,mini_resumo,created_at&order=created_at.desc&limit=1000`, {
-          headers: supabaseHeaders
-        }, 6000);
+        // Identificar IDs de conversas que foram escaladas mas não estão na lista principal
+        const extraEscalatedIds = (escalados || [])
+          .filter((e: any) => e?.id_conversa_chatwoot && !visibleChatIds.includes(String(e.id_conversa_chatwoot)))
+          .map((e: any) => String(e.id_conversa_chatwoot));
 
-        const usersFetch = getCachedUsers(supabaseUrl, anonKey);
+        const targetChatIds = [...new Set([...visibleChatIds, ...extraEscalatedIds])];
 
-        const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
-          headers: supabaseHeaders
-        }, 6000);
+        let encerrados: any[] = [];
+        let monitorData: any[] = [];
+        let users: any[] = [];
 
-        const [conversations, encerrados, escalados, users, monitorData] = await Promise.all([
-          conversationsFetch,
-          supabaseFetch,
-          escaladosFetch,
-          usersFetch,
-          monitorFetch,
-        ]) as [any[], any[], any[], any[], any[]];
+        if (targetChatIds.length > 0) {
+          const idsParam = `in.(${targetChatIds.join(',')})`;
+
+          // Buscar dados adicionais filtrando apenas pelas conversas alvo (redução drástica de egress)
+          const encerradosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?id_conversa_chatwoot=${idsParam}&select=id_conversa_chatwoot,mini_resumo`, {
+            headers: supabaseHeaders
+          }, 6000);
+
+          const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?conversation_id=${idsParam}&select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
+            headers: supabaseHeaders
+          }, 6000);
+
+          const usersFetch = getCachedUsers(supabaseUrl, anonKey);
+
+          const [encFetch, monFetch, usrFetch] = await Promise.all([
+            encerradosFetch,
+            monitorFetch,
+            usersFetch,
+          ]);
+          encerrados = encFetch || [];
+          monitorData = monFetch || [];
+          users = usrFetch || [];
+        } else {
+          users = await getCachedUsers(supabaseUrl, anonKey);
+        }
 
         const encerradosByConversation = new Set(
           (encerrados || [])
@@ -777,6 +799,23 @@ export function useUpdateChatStatus() {
 }
 
 
+// Helper para atualizar o cache de chats otimisticamente (UI instantânea)
+function optimisticUpdateChat(
+  queryClient: ReturnType<typeof useQueryClient>,
+  chatId: string,
+  updater: (chat: any) => any
+) {
+  const previousChats = queryClient.getQueryData<any[]>(['chats']);
+  if (previousChats) {
+    queryClient.setQueryData(['chats'], (old: any[] | undefined) =>
+      (old || []).map((chat: any) =>
+        String(chat.id) === String(chatId) ? updater({ ...chat }) : chat
+      )
+    );
+  }
+  return { previousChats };
+}
+
 export function useReactivateAI() {
   const queryClient = useQueryClient();
 
@@ -792,6 +831,23 @@ export function useReactivateAI() {
       await chatwootAPI.addLabel(Number(id), filteredLabels);
       // Remove o operador atribuído para que a IA volte a ser responsável
       await chatwootAPI.unassignAgent(Number(id));
+    },
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: ['chats'] });
+      return optimisticUpdateChat(queryClient, variables.id, (chat) => {
+        chat.labels = (chat.labels || []).filter((l: string) => {
+          const n = l.toLowerCase();
+          return n !== 'precisa_atendimento' && n !== 'fora_exp_intervencao' && n !== 'fim_semana_intervencao' && n !== 'agente-off';
+        });
+        chat.attendant = undefined;
+        chat.assigneeId = undefined;
+        return chat;
+      });
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousChats) {
+        queryClient.setQueryData(['chats'], context.previousChats);
+      }
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
@@ -819,6 +875,21 @@ export function useInterveneChat() {
       }
 
       return chatwootAPI.addLabel(Number(id), updatedLabels);
+    },
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: ['chats'] });
+      return optimisticUpdateChat(queryClient, variables.id, (chat) => {
+        const labels = new Set((chat.labels || []).map((l: string) => l.toLowerCase()));
+        labels.add('precisa_atendimento');
+        labels.add('agente-off');
+        chat.labels = Array.from(labels);
+        return chat;
+      });
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousChats) {
+        queryClient.setQueryData(['chats'], context.previousChats);
+      }
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
@@ -858,6 +929,31 @@ export function useTakeOverChat() {
       const numericAttendantId = Number(attendantId);
       if (Number.isFinite(numericAttendantId) && numericAttendantId > 0) {
         await chatwootAPI.assignAgent(Number(id), numericAttendantId);
+      }
+    },
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: ['chats'] });
+      return optimisticUpdateChat(queryClient, variables.id, (chat) => {
+        // Remove labels de intervenção, adiciona agente-off
+        chat.labels = (chat.labels || []).filter((l: string) => {
+          const n = l.toLowerCase();
+          return n !== 'precisa_atendimento' && n !== 'fora_exp_intervencao' && n !== 'fim_semana_intervencao';
+        });
+        if (!chat.labels.some((l: string) => l.toLowerCase() === 'agente-off')) {
+          chat.labels.push('agente-off');
+        }
+        if (variables.attendantId) {
+          chat.assigneeId = Number(variables.attendantId);
+        }
+        if (variables.attendantArea) {
+          chat.attendantArea = formatUserArea(variables.attendantArea);
+        }
+        return chat;
+      });
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousChats) {
+        queryClient.setQueryData(['chats'], context.previousChats);
       }
     },
     onSuccess: (_, variables) => {

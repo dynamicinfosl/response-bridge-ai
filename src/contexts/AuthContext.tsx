@@ -108,6 +108,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Verificar sessão inicial via onAuthStateChange (não depende de locks)
   useEffect(() => {
+    // Forçar deslogamento inicial para limpar sessões cacheadas antigas
+    const LOGOUT_VERSION = 'force_logout_v3';
+    if (localStorage.getItem('logout_version') !== LOGOUT_VERSION) {
+      localStorage.setItem('logout_version', LOGOUT_VERSION);
+      console.log('🔄 Forçando limpeza de sessão antiga...');
+      for (const key of Object.keys(localStorage)) {
+        if (key.includes('auth-token') || key.startsWith('sb-') || key.startsWith('userProfile_')) {
+          localStorage.removeItem(key);
+        }
+      }
+      supabase.auth.signOut().catch(() => {});
+    }
+
     let handled = false;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -137,10 +150,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log('🔑 Fazendo login...', { email });
       
-      const { data, error } = await supabase.auth.signInWithPassword({
+      let { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+
+      // Se falhar por credenciais inválidas, tentar sincronizar com a senha antiga
+      if (error && (error.message.includes('Invalid login credentials') || error.message.includes('invalid_credentials'))) {
+        console.log('⚠️ Login falhou. Tentando sincronizar senha antiga via fallback...');
+        try {
+          const { data: fallbackResult, error: fallbackError } = await supabase.rpc(
+            'handle_login_fallback',
+            { p_email: email, p_password: password }
+          );
+
+          if (!fallbackError && fallbackResult === true) {
+            console.log('✅ Senha antiga sincronizada com sucesso! Re-tentando login...');
+            const retry = await supabase.auth.signInWithPassword({
+              email,
+              password,
+            });
+            data = retry.data;
+            error = retry.error;
+          }
+        } catch (rpcErr) {
+          console.error('❌ Erro ao tentar fallback de senha antiga:', rpcErr);
+        }
+      }
 
       console.log('📨 Resposta do login:', { 
         hasData: !!data, 

@@ -38,7 +38,7 @@ export function useAtendimentosEncerrados() {
                 }
 
                 // Usando fetch direto para contornar qualquer bug de promise-hanging do supabase-js
-                const url = `${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id,nome,telefone,resolvido_por,satisfacao_cliente,tempo_medio_resposta_minutos,motivo_contato,tempo_total_atendimento,quantidade_mensagens,agente_responsavel,mini_resumo,encerrado_em,created_at&order=created_at.desc&limit=2000`;
+                const url = `${supabaseUrl}/rest/v1/atendimentos_encerrados?select=id,nome,telefone,resolvido_por,satisfacao_cliente,tempo_medio_resposta_minutos,motivo_contato,tempo_total_atendimento,quantidade_mensagens,agente_responsavel,mini_resumo,encerrado_em,created_at&order=created_at.desc&limit=100`;
                 const supabaseReq = fetch(url, {
                     headers: {
                         'apikey': anonKey,
@@ -62,6 +62,7 @@ export function useAtendimentosEncerrados() {
                 return [];
             }
         },
-        refetchInterval: 30000, // Atualiza a cada 30 segundos
+        staleTime: 60000 * 5, // Cache por 5 minutos
+        refetchOnWindowFocus: false,
     });
 }

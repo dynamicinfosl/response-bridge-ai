@@ -97,7 +97,7 @@ export function UpdatePopup() {
 
   const handleLike = async () => {
     if (!current || !realUserId || processingIds.has(current.id)) return;
-    console.log('[handleLike] atualizacao_id:', current.id, 'user_id:', realUserId, 'token?:', !!localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token'));
+    console.log('[handleLike] atualizacao_id:', current.id, 'user_id:', realUserId);
     setProcessingIds(s => new Set(s).add(current.id));
     try {
       await toggleLike.mutateAsync({ atualizacao_id: current.id, user_id: realUserId });

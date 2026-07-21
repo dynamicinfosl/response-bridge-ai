@@ -33,7 +33,7 @@ export function usePesquisasSatisfacao() {
           setTimeout(() => reject(new Error('Timeout de 10s atingido ao buscar pesquisas de satisfação.')), 10000)
         );
 
-        const req = fetch(`${supabaseUrl}/rest/v1/pesquisas_satisfacao?select=id,status,nota,created_at&order=created_at.desc&limit=5000`, {
+        const req = fetch(`${supabaseUrl}/rest/v1/pesquisas_satisfacao?select=id,status,nota,created_at&order=created_at.desc&limit=100`, {
           headers: {
             apikey: anonKey,
             Authorization: `Bearer ${anonKey}`,
@@ -50,6 +50,7 @@ export function usePesquisasSatisfacao() {
         return [];
       }
     },
-    refetchInterval: 30000,
+    staleTime: 60000 * 5, // Cache por 5 minutos
+    refetchOnWindowFocus: false,
   });
 }

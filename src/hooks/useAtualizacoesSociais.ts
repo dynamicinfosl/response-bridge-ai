@@ -29,9 +29,16 @@ export interface Vista {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+function getProjectRef() {
+  const url = import.meta.env.VITE_SUPABASE_URL || '';
+  const match = url.match(/https:\/\/([^.]+)\.supabase/);
+  return match ? match[1] : '';
+}
+
 function getToken() {
   try {
-    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    const projectRef = getProjectRef();
+    const stored = localStorage.getItem(`sb-${projectRef}-auth-token`);
     if (stored) {
       const parsed = JSON.parse(stored);
       return parsed?.access_token || anonKey;
@@ -200,7 +207,8 @@ async function updateVista(data: { atualizacao_id: string; user_id: string; curt
 
 function getAuthToken(): string {
   try {
-    const stored = localStorage.getItem('sb-erydxufihxdyhzklpjza-auth-token');
+    const projectRef = getProjectRef();
+    const stored = localStorage.getItem(`sb-${projectRef}-auth-token`);
     if (stored) {
       const parsed = JSON.parse(stored);
       if (parsed?.access_token) return parsed.access_token;
