@@ -67,9 +67,15 @@ const getCachedUsers = async (supabaseUrl: string, anonKey: string): Promise<any
 };
 
 // Helper para traduzir mensagens internas do sistema sem expor o conceito de "etiquetas"
+// Helper para traduzir mensagens internas do sistema sem expor conceitos brutos do Chatwoot
 const translateSystemMessage = (content: string): string => {
   if (!content) return '';
   const lower = content.toLowerCase();
+
+  // Mensagens de desatribuição (ex: "Conversa desatribuída por Gabriel Souza", "Desatribuído por Gabriel Souza")
+  if (lower.includes('desatribu')) {
+    return 'Atendente desatribuído';
+  }
 
   if (lower.includes(' adicionou ')) {
     if (lower.includes('precisa_atendimento')) return 'Intervenção humana solicitada';
@@ -85,11 +91,22 @@ const translateSystemMessage = (content: string): string => {
     return 'Configuração do atendimento atualizada';
   }
 
-  if (lower.includes('atribuído a') || lower.includes(' atribuiu ') || lower.includes(' assigned ')) {
+  if (lower.includes('atribuído a') || lower.includes(' atribuiu ') || lower.includes(' assigned ') || lower.includes(' transferiu ')) {
     // Padrão: "[Operador] atribuiu a si mesmo essa conversa"
     const matchSelf = content.match(/(.+?) atribuiu a si mesmo essa conversa/i);
     if (matchSelf) {
-      return `${matchSelf[1].trim()} interviu em uma conversa`;
+      return `${matchSelf[1].trim()} assumiu a conversa`;
+    }
+
+    // Padrão: "[Quem transferiu] transferiu a conversa para [Destinatário]"
+    const matchTransferiu = content.match(/(.+?) transferiu a conversa para (.+)/i);
+    if (matchTransferiu) {
+      const fromName = matchTransferiu[1].trim();
+      const toName = matchTransferiu[2].trim();
+      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+        return `${toName} assumiu a conversa`;
+      }
+      return `${fromName} transferiu a conversa para ${toName}`;
     }
 
     // Padrão: "Atribuído a [Destinatário] por [Quem transferiu]"
@@ -97,10 +114,10 @@ const translateSystemMessage = (content: string): string => {
     if (matchBy) {
       const toName = matchBy[1].trim();
       const fromName = matchBy[2].trim();
-      if (fromName && fromName.toLowerCase() !== toName.toLowerCase()) {
-        return `${fromName} transferiu a conversa para ${toName}`;
+      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+        return `${toName} assumiu a conversa`;
       }
-      return `${toName} interviu em uma conversa`;
+      return `${fromName} transferiu a conversa para ${toName}`;
     }
 
     // Padrão: "[Quem transferiu] atribuiu a conversa a [Destinatário]"
@@ -108,18 +125,16 @@ const translateSystemMessage = (content: string): string => {
     if (matchAtribuiu) {
       const fromName = matchAtribuiu[1].trim();
       const toName = matchAtribuiu[2].trim();
-      if (fromName.toLowerCase() !== toName.toLowerCase()) {
-        return `${fromName} transferiu a conversa para ${toName}`;
+      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+        return `${toName} assumiu a conversa`;
       }
-      return `${toName} interviu em uma conversa`;
+      return `${fromName} transferiu a conversa para ${toName}`;
     }
 
     // Padrão: "Atribuído a [Operador]" (sem "por" — auto-atribuição/intervenção)
     const matchSimple = content.match(/atribuído a (.+)/i);
-    if (matchSimple) return `${matchSimple[1].trim()} interviu em uma conversa`;
+    if (matchSimple) return `${matchSimple[1].trim()} assumiu a conversa`;
 
-    // Fallback: loga o conteúdo não reconhecido para depuração
-    console.warn('[translateSystemMessage] padrão não reconhecido:', JSON.stringify(content));
     return content;
   }
 
@@ -131,7 +146,6 @@ const translateSystemMessage = (content: string): string => {
     return 'O sistema reabriu a conversa devido a uma nova mensagem recebida.';
   }
 
-  // Se não reconhecer o padrão, retorna o texto original para não perder informações vitais (como resumos de IA)
   return content;
 };
 
@@ -540,8 +554,8 @@ export function useChats() {
         throw err;
       }
     },
-    refetchInterval: 15000,
-    staleTime: 8000,
+    refetchInterval: 6000,
+    staleTime: 4000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     placeholderData: (prev: any) => prev,
@@ -653,12 +667,16 @@ export function useMessages(chatId: string | null) {
         const msg = sortedRaw[i];
         if (msg.message_type !== 2 || msg.private) continue;
         const content = msg.content || '';
-        if (/atribuído a/i.test(content)) {
-          const matchBy = content.match(/atribuído a (.+?) por/i);
+        if (/atribuído a|atribuiu|transferiu/i.test(content)) {
+          const matchBy = content.match(/atribuído a (.+?) por (.+)/i);
           const matchSimple = content.match(/atribuído a (.+)/i);
           const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
-          const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || '').trim();
-          const fromName = matchBy?.[2]?.trim() || matchAtribuiu?.[1]?.trim() || '';
+          const matchTransferiu = content.match(/(.*) transferiu a conversa para (.*)/i);
+          const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || matchTransferiu?.[2] || '').trim();
+          let fromName = (matchBy?.[2] || matchAtribuiu?.[1] || matchTransferiu?.[1] || '').trim();
+          if (fromName.toLowerCase().includes('gabriel souza')) {
+            fromName = '';
+          }
           if (toName) {
             lastTransferInfo = {
               fromName,

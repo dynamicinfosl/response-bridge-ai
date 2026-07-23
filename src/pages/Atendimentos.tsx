@@ -265,7 +265,7 @@ const Atendimentos = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  const { data: chatsData, isLoading: chatsLoading, error: chatsError } = useChats();
+  const { data: chatsData, isLoading: chatsLoading, isFetching: chatsFetching, error: chatsError } = useChats();
   const { data: searchResults, isLoading: searchLoading } = useChatSearch(searchQuery);
   const { data: messagesData, isLoading: messagesLoading } = useMessages(selectedChat);
   const sendMessageMutation = useSendMessage();
@@ -1708,6 +1708,9 @@ const Atendimentos = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <CardTitle className="text-sm sm:text-base font-bold text-foreground">Conversas</CardTitle>
+                    {((chatsFetching && !chatsLoading) || searchLoading) && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                    )}
                     {user && (
                       <Badge variant="secondary" className="text-[9px] uppercase font-bold px-1 py-0 bg-[#f0f2f5] text-[#54656f] border-none">
                         {user.role} {user.area ? `| ${user.area}` : ''}

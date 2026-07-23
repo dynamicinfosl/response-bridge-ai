@@ -6,8 +6,8 @@ const CHATWOOT_ACCOUNT_ID = Deno.env.get('CHATWOOT_ACCOUNT_ID') || '1';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-const CACHE_TTL_MS = 10_000;
-const MAX_PAGES = 10;
+const CACHE_TTL_MS = 6_000;
+const MAX_PAGES = 3;
 const FETCH_TIMEOUT_MS = 8_000;
 const LOCK_TIMEOUT_MS = 30_000;
 
@@ -242,6 +242,7 @@ Deno.serve(async (req: Request) => {
         await supabase
           .from('conversas_cache')
           .delete()
+          .not('status', 'in', '("open","pending")')
           .not('conversation_id', 'in', `(${activeIds.join(',')})`);
       }
     }

@@ -40,15 +40,23 @@ CREATE POLICY "Users can insert own profile"
   FOR INSERT
   WITH CHECK (auth.uid() = id);
 
--- Política: Administradores podem ver todos os perfis
-CREATE POLICY "Admins can view all profiles"
+-- Função helper SECURITY DEFINER para evitar recursão infinita no RLS
+CREATE OR REPLACE FUNCTION public.is_admin_or_master_or_encarregado()
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.users
+    WHERE id = auth.uid() AND role IN ('admin', 'master', 'encarregado')
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Política: Administradores/masters/encarregados podem ver todos os perfis
+CREATE POLICY "Admins/masters/encarregados can view all profiles"
   ON users
   FOR SELECT
   USING (
-    EXISTS (
-      SELECT 1 FROM users
-      WHERE id = auth.uid() AND role = 'admin'
-    )
+    public.is_admin_or_master_or_encarregado()
   );
 
 -- Função para criar perfil automaticamente no signup
