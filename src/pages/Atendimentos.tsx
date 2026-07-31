@@ -1604,7 +1604,9 @@ const Atendimentos = () => {
   });
   const mergedChats = Array.from(mergedChatMap.values());
 
-  const selectedChatData = mergedChats.find(chat => chat.id === selectedChat);
+  const selectedChatData = chats.find(chat => chat.id === selectedChat) ||
+    searchChats.find(chat => chat.id === selectedChat) ||
+    mergedChats.find(chat => chat.id === selectedChat);
 
   // Ordenar por prioridade de tempo de espera (crítico > alerta > normal)
   const sortedChats = [...mergedChats].sort((a, b) => {

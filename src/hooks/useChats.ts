@@ -959,17 +959,10 @@ export function useTakeOverChat() {
         filteredLabels.push('agente-off');
       }
 
-      // 1. Reabre a conversa caso esteja resolvida/fechada (ANTES de alterar labels/assignee)
-      try {
-        await chatwootAPI.updateStatus(Number(id), 'open');
-      } catch (reopenErr) {
-        console.warn('[TakeOver] Falha ao reabrir conversa (pode já estar aberta):', reopenErr);
-      }
-
-      // 2. Atualiza labels
+      // 1. Atualiza labels
       await chatwootAPI.addLabel(Number(id), filteredLabels);
 
-      // 3. Atribui o operador
+      // 2. Atribui o operador
       const numericAttendantId = Number(attendantId);
       if (Number.isFinite(numericAttendantId) && numericAttendantId > 0) {
         await chatwootAPI.assignAgent(Number(id), numericAttendantId);
