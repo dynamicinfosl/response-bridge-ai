@@ -62,6 +62,12 @@ export default async function handler(req, res) {
   } else {
     originalPath = (req.url || '').replace(/^\/api\/mk/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
   }
+
+  // Normaliza o caminho para garantir que não haja duplicação /mk/mk/ e que haja o /mk/ no destino
+  originalPath = originalPath.replace(/^\/mk\/mk\//, '/mk/');
+  if (!originalPath.startsWith('/mk/') && originalPath !== '/mk') {
+    originalPath = '/mk' + (originalPath.startsWith('/') ? originalPath : '/' + originalPath);
+  }
   const targetUrl = `${mkBase.replace(/\/$/, '')}${originalPath}`;
 
   const headers = {

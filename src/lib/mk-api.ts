@@ -32,7 +32,11 @@ async function mkFetch<T>(
   if (!base) throw new Error('URL do MK não configurada. Configure VITE_MK_BASE_URL no .env ou mk_base_url no Supabase.');
   if (!token) throw new Error('Token do MK não configurado. O n8n deve salvar o token em system_settings (key: mk_token) no Supabase.');
 
-  const pathNorm = path.startsWith('/') ? path : `/${path}`;
+  let pathNorm = path.startsWith('/') ? path : `/${path}`;
+  if (base.endsWith('/mk') && pathNorm.startsWith('/mk/')) {
+    pathNorm = pathNorm.substring(3);
+  }
+
   const fullUrlStr =
     base.startsWith('http')
       ? new URL(path, base).toString()
