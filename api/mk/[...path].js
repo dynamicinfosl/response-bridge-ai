@@ -15,13 +15,16 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  const defaultMkBase = 'http://186.219.120.50:8080';
+  const defaultSupabaseUrl = 'https://vwecyrjfcqdcdaooizcx.supabase.co';
+  const defaultSupabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3ZWN5cmpmY3FkY2Rhb29pemN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1OTMzMTEsImV4cCI6MjEwMDE2OTMxMX0.TZpa9G3qBW5BDJoRHqd0pXru4TTjulVkei3Fo2Wj9EQ';
+
   let mkBase = process.env.VITE_MK_BASE_URL;
 
   if (!mkBase) {
-    // Fallback: busca mk_base_url no Supabase (system_settings)
     try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL;
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || defaultSupabaseUrl;
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || defaultSupabaseKey;
       if (supabaseUrl && supabaseKey) {
         const settingsRes = await fetch(
           `${supabaseUrl}/rest/v1/system_settings?select=value&key=eq.mk_base_url`,
@@ -40,7 +43,7 @@ export default async function handler(req, res) {
   }
 
   if (!mkBase) {
-    return res.status(500).json({ error: 'Variável VITE_MK_BASE_URL não configurada no Vercel e mk_base_url não encontrado no Supabase.' });
+    mkBase = defaultMkBase;
   }
 
   // Obtém o caminho correto considerando o roteamento catch-all [...path] do Vercel

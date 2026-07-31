@@ -39,7 +39,7 @@ async function mkFetch<T>(
 
   const fullUrlStr =
     base.startsWith('http')
-      ? new URL(path, base).toString()
+      ? new URL(pathNorm, base).toString()
       : `${base}${pathNorm}`;
 
   const url = new URL(fullUrlStr, typeof window !== 'undefined' ? window.location.origin : undefined);

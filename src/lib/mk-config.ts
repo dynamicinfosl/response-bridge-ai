@@ -120,7 +120,7 @@ function parseSettingsRows(data: any): MKConfig | null {
 }
 
 function envBaseUrl(): string {
-  return ((import.meta.env.VITE_MK_BASE_URL as string) || '').replace(/\/$/, '');
+  return ((import.meta.env.VITE_MK_BASE_URL as string) || 'http://186.219.120.50:8080').replace(/\/$/, '');
 }
 
 function envToken(): string {

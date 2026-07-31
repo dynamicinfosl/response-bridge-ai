@@ -42,7 +42,11 @@ export default defineConfig(({ mode }) => {
       proxy["/api/mk"] = {
         target: u.origin,
         changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/api\/mk/, "/mk").replace(/^\/mk\/mk\//, "/mk/"),
+        rewrite: (path: string) => {
+          const clean = path.replace(/^\/api\/mk/, "");
+          if (clean.startsWith("/mk/")) return clean;
+          return "/mk" + (clean.startsWith("/") ? clean : "/" + clean);
+        },
         secure: false,
       };
     } catch (_) {
