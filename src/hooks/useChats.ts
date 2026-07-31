@@ -603,8 +603,17 @@ export function useMessages(chatId: string | null) {
       // ID do admin cujo token de API é usado para TODAS as mensagens (bot + humanos)
       const ADMIN_SENDER_ID = '1';
 
+      // Deduplica mensagens por ID único antes de ordenar
+      const uniqueRawMap = new Map<string, any>();
+      for (const msg of rawMessages) {
+        if (msg && msg.id != null) {
+          uniqueRawMap.set(String(msg.id), msg);
+        }
+      }
+      const uniqueRaw = Array.from(uniqueRawMap.values());
+
       // Ordena cronologicamente para construir a timeline
-      const sortedRaw = [...rawMessages].sort((a: any, b: any) => a.created_at - b.created_at);
+      const sortedRaw = uniqueRaw.sort((a: any, b: any) => a.created_at - b.created_at);
 
       // ===== TIMELINE: detectar períodos de intervenção humana =====
       // Quando "agente-off" é adicionado, o bot para e um humano assume.

@@ -896,11 +896,11 @@ const Atendimentos = () => {
     };
   })();
 
-  // Garantir que messages é sempre um array também e normalizar
+  // Garantir que messages é sempre um array normalizado e DEDUPLICADO por ID
   const messages = (() => {
     const rawMessages = messagesData?.messages || [];
 
-    return rawMessages
+    const normalized = rawMessages
       .map((msg, idx) => {
         const stableId = msg.id?.toString() || `msg_${idx}_${Date.now()}`;
         const chatId = msg.chatId || selectedChat || '';
@@ -921,6 +921,17 @@ const Atendimentos = () => {
         const timeB = new Date(b.timestamp).getTime();
         return (isNaN(timeA) || isNaN(timeB)) ? 0 : timeA - timeB;
       });
+
+    const seenIds = new Set<string>();
+    const deduplicated: typeof normalized = [];
+    for (const msg of normalized) {
+      if (!seenIds.has(msg.id)) {
+        seenIds.add(msg.id);
+        deduplicated.push(msg);
+      }
+    }
+
+    return deduplicated;
   })();
 
   // Buscar identidades de clientes já identificadas por telefone

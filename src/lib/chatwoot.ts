@@ -171,6 +171,7 @@ export const chatwootAPI = {
 
   getMessages: async (conversationId: number) => {
     let allMessages: ChatwootMessage[] = [];
+    const seenIds = new Set<number>();
     let beforeId: string | number = '';
     
     for (let i = 0; i < 5; i++) { // Busca até 5 páginas (100 mensagens)
@@ -180,10 +181,13 @@ export const chatwootAPI = {
       
       if (!Array.isArray(messages) || messages.length === 0) break;
       
-      allMessages = [...allMessages, ...messages];
+      for (const msg of messages) {
+        if (msg && msg.id != null && !seenIds.has(Number(msg.id))) {
+          seenIds.add(Number(msg.id));
+          allMessages.push(msg);
+        }
+      }
       
-      // Chatwoot retorna as mensagens em ordem cronológica (mais antigas primeiro)
-      // Portanto, messages[0] é a mais antiga da página atual
       if (messages.length < 20) break;
       
       beforeId = messages[0].id;
