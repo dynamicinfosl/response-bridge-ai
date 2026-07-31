@@ -50,20 +50,27 @@ export default async function handler(req, res) {
   let originalPath = '';
   if (req.query && Array.isArray(req.query.path)) {
     originalPath = '/' + req.query.path.join('/');
-    try {
-      const urlObj = new URL(req.url, 'http://localhost');
-      urlObj.searchParams.delete('path');
-      const queryString = urlObj.searchParams.toString();
-      if (queryString) {
-        originalPath += `?${queryString}`;
-      }
-    } catch (e) {
-      /* ignore */
-    }
   } else if (req.query && typeof req.query.path === 'string') {
     originalPath = '/' + req.query.path;
   } else {
-    originalPath = (req.url || '').replace(/^\/api\/mk/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+    originalPath = (req.url || '').split('?')[0].replace(/^\/api\/mk/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+  }
+
+  // Constrói os parâmetros de busca garantindo que sys, token e outros parâmetros do req.query sejam mantidos
+  const queryParams = new URLSearchParams();
+  if (req.query && typeof req.query === 'object') {
+    Object.entries(req.query).forEach(([k, v]) => {
+      if (k === 'path') return; // ignora a chave de roteamento do Vercel
+      if (Array.isArray(v)) {
+        v.forEach(val => queryParams.append(k, String(val)));
+      } else if (v != null) {
+        queryParams.append(k, String(v));
+      }
+    });
+  }
+  const queryString = queryParams.toString();
+  if (queryString) {
+    originalPath += `?${queryString}`;
   }
 
   // Normaliza o caminho para garantir que não haja duplicação /mk/mk/ e que haja o /mk/ no destino
