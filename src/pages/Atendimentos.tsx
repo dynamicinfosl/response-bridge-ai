@@ -2420,15 +2420,24 @@ const Atendimentos = () => {
                               size="sm"
                               className="h-7 text-[10px] px-2 bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
                               onClick={() => {
-                                interveneChatMutation.mutate({
+                                setLocalHumanAttendants(prev => ({
+                                  ...prev,
+                                  [selectedChatData.id]: {
+                                    name: user?.name,
+                                    area: user?.area || undefined,
+                                  },
+                                }));
+                                takeOverChatMutation.mutate({
                                   id: selectedChatData.id,
-                                  labels: selectedChatData.labels
+                                  labels: selectedChatData.labels,
+                                  attendantId: user?.chatwoot_id,
+                                  attendantArea: user?.area || null
                                 });
                                 logAuditAction('chat_intervene', { clientName: formatClientName(selectedChatData) }, 'chat', selectedChatData.id);
                               }}
-                              disabled={interveneChatMutation.isPending}
+                              disabled={takeOverChatMutation.isPending}
                             >
-                              <UserSearch className={cn("w-3.5 h-3.5 mr-1", interveneChatMutation.isPending && "animate-spin")} />
+                              <UserSearch className={cn("w-3.5 h-3.5 mr-1", takeOverChatMutation.isPending && "animate-spin")} />
                               Intervir
                             </Button>
                           )}

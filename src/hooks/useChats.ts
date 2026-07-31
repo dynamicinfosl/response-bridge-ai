@@ -753,20 +753,11 @@ export function useSendMessage() {
       const contentAttributes = data.operatorName ? { sender_name: data.operatorName } : undefined;
       const response = await chatwootAPI.sendMessage(Number(data.chatId), data.content, false, contentAttributes);
 
-
-      // 2. Auto-atribuir operador se conversa não tem assignee
+      // 2. Auto-atribuir operador se conversa não tem assignee (PRIMEIRO atribui)
       const numericOperatorId = Number(data.operatorChatwootId);
       const shouldAutoAssign = !data.currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
 
       if (shouldAutoAssign) {
-        // Reabre a conversa se estiver resolvida/fechada
-        if (data.chatStatus === 'concluido' || data.chatStatus === 'resolved') {
-          try {
-            await chatwootAPI.updateStatus(Number(data.chatId), 'open');
-          } catch (reopenErr) {
-            console.warn('[SendMessage] Falha ao reabrir conversa:', reopenErr);
-          }
-        }
         try {
           await chatwootAPI.assignAgent(Number(data.chatId), numericOperatorId);
           console.log('✅ Operador auto-atribuído à conversa:', data.chatId);
@@ -775,7 +766,7 @@ export function useSendMessage() {
         }
       }
 
-      // 3. Gerenciamento de etiquetas
+      // 3. Gerenciamento de etiquetas (DEPOIS de atribuir para que n8n não limpe)
       const labels = data.labels || [];
       const hasNeedsHuman = labels.some(l => l.toLowerCase() === 'precisa_atendimento');
 
@@ -959,14 +950,14 @@ export function useTakeOverChat() {
         filteredLabels.push('agente-off');
       }
 
-      // 1. Atualiza labels
-      await chatwootAPI.addLabel(Number(id), filteredLabels);
-
-      // 2. Atribui o operador
+      // 1. PRIMEIRO atribui o operador no Chatwoot (para que o n8n identifique o atendente atribuído antes da atualização de etiquetas)
       const numericAttendantId = Number(attendantId);
       if (Number.isFinite(numericAttendantId) && numericAttendantId > 0) {
         await chatwootAPI.assignAgent(Number(id), numericAttendantId);
       }
+
+      // 2. DEPOIS atualiza as etiquetas (remove precisa_atendimento, adiciona agente-off)
+      await chatwootAPI.addLabel(Number(id), filteredLabels);
     },
     onMutate: async (variables) => {
       await queryClient.cancelQueries({ queryKey: ['chats'] });
@@ -1056,14 +1047,6 @@ export function useSendAttachment() {
       const shouldAutoAssign = !currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
 
       if (shouldAutoAssign) {
-        // Reabre a conversa se estiver resolvida/fechada
-        if (chatStatus === 'concluido' || chatStatus === 'resolved') {
-          try {
-            await chatwootAPI.updateStatus(Number(chatId), 'open');
-          } catch (reopenErr) {
-            console.warn('[SendAttachment] Falha ao reabrir conversa:', reopenErr);
-          }
-        }
         try {
           await chatwootAPI.assignAgent(Number(chatId), numericOperatorId);
           const currentLabels = labels || [];
