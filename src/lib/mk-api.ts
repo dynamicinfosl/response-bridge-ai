@@ -61,8 +61,9 @@ async function mkFetch<T>(
     ]);
     clearTimeout(timeoutId);
 
-    // Se o token expirou, invalida o cache e tenta de novo com token fresco do Supabase
-    if ((res.status === 401 || res.status === 403) && retry) {
+    // Se a requisição falhar (401, 403, 500, 502, etc.) e for a primeira tentativa, invalida o cache e tenta com token fresco do Supabase
+    if (!res.ok && retry) {
+      console.warn(`[MK Fetch] Resposta ${res.status}. Invalidando cache local do MK e buscando token atualizado no Supabase...`);
       invalidateMKCache();
       return mkFetch<T>(path, params, false); // retry = false evita loop infinito
     }
@@ -73,11 +74,11 @@ async function mkFetch<T>(
     try {
       const parsed = JSON.parse(text);
       
-      // Detecção de token expirado via payload (o MK as vezes retorna 200 OK com erro de token)
-      if (parsed && typeof parsed === 'object' && parsed.status === 'ERRO') {
+      // Detecção de token expirado ou inválido via payload
+      if (parsed && typeof parsed === 'object' && (parsed.status === 'ERRO' || parsed.status === 'erro' || parsed.CodToken === 0)) {
         const msg = String(parsed.Mensagem || parsed.message || parsed.msg || '').toLowerCase();
-        if ((msg.includes('token') && (msg.includes('expirado') || msg.includes('inválido'))) && retry) {
-          console.warn('[MK Fetch] Token expirado detectado no payload. Invalidando cache e tentando novamente...');
+        if ((msg.includes('token') || parsed.CodToken === 0 || msg.includes('não localizado') || msg.includes('expirado') || msg.includes('inválido')) && retry) {
+          console.warn('[MK Fetch] Token inválido/expirado detectado no payload. Invalidando cache e buscando no Supabase...');
           invalidateMKCache();
           return mkFetch<T>(path, params, false);
         }
@@ -85,7 +86,6 @@ async function mkFetch<T>(
       
       return parsed as T;
     } catch (e) {
-      // Ignora erro de JSON parse aqui, lança erro genérico abaixo
       throw new Error(`Resposta do MK não é JSON válido. Endpoint: ${path}`);
     }
   } catch (err) {

@@ -96,6 +96,12 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Content-Type', contentType);
+
+    // Se o MK retornou mensagem de token inválido/expirado, responde com status 401 para o cliente invalidar cache local
+    if (text && (text.includes('Token não localizado') || text.includes('Token expirado') || text.includes('"CodToken": 0'))) {
+      return res.status(401).send(text);
+    }
+
     res.status(response.status).send(text);
   } catch (err) {
     console.error('[mk-proxy] Erro ao encaminhar para MK Solutions:', err);
