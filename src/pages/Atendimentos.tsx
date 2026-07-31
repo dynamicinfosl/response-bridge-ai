@@ -305,6 +305,7 @@ const Atendimentos = () => {
         currentAssigneeId: selectedChatData?.assigneeId,
         labels: selectedChatData?.labels,
         operatorName: user?.name,
+        chatStatus: selectedChatData?.status,
       },
       {
         onSuccess: (response: any) => {
@@ -1311,6 +1312,7 @@ const Atendimentos = () => {
           operatorChatwootId: user?.chatwoot_id,
           currentAssigneeId: selectedChatData?.assigneeId,
           operatorName: user?.name,
+          chatStatus: selectedChatData?.status,
         },
         {
           onSuccess: (response: any) => {
@@ -3069,6 +3071,7 @@ const Atendimentos = () => {
                                   currentAssigneeId: selectedChatData?.assigneeId,
                                   labels: selectedChatData?.labels,
                                   operatorName: user?.name,
+                                  chatStatus: selectedChatData?.status,
                                 },
                                 {
                                   onSuccess: (response: any) => {

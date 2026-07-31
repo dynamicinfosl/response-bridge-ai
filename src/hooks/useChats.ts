@@ -748,7 +748,7 @@ export function useSendMessage() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { chatId: string; content: string; labels?: string[]; operatorChatwootId?: number | string; currentAssigneeId?: number; operatorName?: string }) => {
+    mutationFn: async (data: { chatId: string; content: string; labels?: string[]; operatorChatwootId?: number | string; currentAssigneeId?: number; operatorName?: string; chatStatus?: string }) => {
       // 1. Enviar a mensagem
       const contentAttributes = data.operatorName ? { sender_name: data.operatorName } : undefined;
       const response = await chatwootAPI.sendMessage(Number(data.chatId), data.content, false, contentAttributes);
@@ -759,6 +759,14 @@ export function useSendMessage() {
       const shouldAutoAssign = !data.currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
 
       if (shouldAutoAssign) {
+        // Reabre a conversa se estiver resolvida/fechada
+        if (data.chatStatus === 'concluido' || data.chatStatus === 'resolved') {
+          try {
+            await chatwootAPI.updateStatus(Number(data.chatId), 'open');
+          } catch (reopenErr) {
+            console.warn('[SendMessage] Falha ao reabrir conversa:', reopenErr);
+          }
+        }
         try {
           await chatwootAPI.assignAgent(Number(data.chatId), numericOperatorId);
           console.log('✅ Operador auto-atribuído à conversa:', data.chatId);
@@ -951,8 +959,17 @@ export function useTakeOverChat() {
         filteredLabels.push('agente-off');
       }
 
+      // 1. Reabre a conversa caso esteja resolvida/fechada (ANTES de alterar labels/assignee)
+      try {
+        await chatwootAPI.updateStatus(Number(id), 'open');
+      } catch (reopenErr) {
+        console.warn('[TakeOver] Falha ao reabrir conversa (pode já estar aberta):', reopenErr);
+      }
+
+      // 2. Atualiza labels
       await chatwootAPI.addLabel(Number(id), filteredLabels);
 
+      // 3. Atribui o operador
       const numericAttendantId = Number(attendantId);
       if (Number.isFinite(numericAttendantId) && numericAttendantId > 0) {
         await chatwootAPI.assignAgent(Number(id), numericAttendantId);
@@ -1037,7 +1054,7 @@ export function useSendAttachment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ chatId, file, content = '', operatorChatwootId, currentAssigneeId, labels, operatorName }: { chatId: string; file: File; content?: string; operatorChatwootId?: number | string; currentAssigneeId?: number; labels?: string[]; operatorName?: string }) => {
+    mutationFn: async ({ chatId, file, content = '', operatorChatwootId, currentAssigneeId, labels, operatorName, chatStatus }: { chatId: string; file: File; content?: string; operatorChatwootId?: number | string; currentAssigneeId?: number; labels?: string[]; operatorName?: string; chatStatus?: string }) => {
       const contentAttributes = operatorName ? { sender_name: operatorName } : undefined;
       const response = await chatwootAPI.sendAttachment(Number(chatId), file, content, contentAttributes);
 
@@ -1046,6 +1063,14 @@ export function useSendAttachment() {
       const shouldAutoAssign = !currentAssigneeId && Number.isFinite(numericOperatorId) && numericOperatorId > 0;
 
       if (shouldAutoAssign) {
+        // Reabre a conversa se estiver resolvida/fechada
+        if (chatStatus === 'concluido' || chatStatus === 'resolved') {
+          try {
+            await chatwootAPI.updateStatus(Number(chatId), 'open');
+          } catch (reopenErr) {
+            console.warn('[SendAttachment] Falha ao reabrir conversa:', reopenErr);
+          }
+        }
         try {
           await chatwootAPI.assignAgent(Number(chatId), numericOperatorId);
           const currentLabels = labels || [];
