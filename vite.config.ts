@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
         target: u.origin,
         changeOrigin: true,
         rewrite: (path: string) => path.replace(/^\/api\/chatwoot/, ""),
-        secure: true,
+        secure: false,
       };
     } catch (_) {
       /* ignore */

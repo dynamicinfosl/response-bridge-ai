@@ -30,24 +30,42 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const chatwootBase = process.env.VITE_CHATWOOT_API_URL;
-  const apiToken = process.env.VITE_CHATWOOT_API_TOKEN;
+  const chatwootBase = (process.env.VITE_CHATWOOT_API_URL || 'https://chatwoot-chatwoot.euftcp.easypanel.host').replace(/\/$/, '');
+  const apiToken = process.env.VITE_CHATWOOT_API_TOKEN || 'Ki9bmrbonCbL6wUhZRoFxs7u';
 
   if (!chatwootBase || !apiToken) {
     return res.status(500).json({ error: 'Variáveis VITE_CHATWOOT_API_URL e VITE_CHATWOOT_API_TOKEN não configuradas no Vercel.' });
   }
 
-  // Remove o prefixo /api/chatwoot do caminho para obter o path real do Chatwoot
-  const originalPath = req.url.replace(/^\/api\/chatwoot/, '') || '/';
+  // Obtém o caminho correto considerando o roteamento catch-all [...path] do Vercel
+  let originalPath = '';
+  if (req.query && Array.isArray(req.query.path)) {
+    originalPath = '/' + req.query.path.join('/');
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      urlObj.searchParams.delete('path');
+      const queryString = urlObj.searchParams.toString();
+      if (queryString) {
+        originalPath += `?${queryString}`;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  } else if (req.query && typeof req.query.path === 'string') {
+    originalPath = '/' + req.query.path;
+  } else {
+    originalPath = (req.url || '').replace(/^\/api\/chatwoot/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+  }
+
   const targetUrl = `${chatwootBase}${originalPath}`;
 
   const headers = {
     'api_access_token': apiToken,
   };
 
-  // Preserva Content-Type original (obrigatório para multipart/form-data)
+  // Preserva Content-Type apenas para requisições com corpo (POST, PATCH, PUT)
   const incomingContentType = req.headers['content-type'];
-  if (incomingContentType) {
+  if (incomingContentType && ['POST', 'PATCH', 'PUT'].includes(req.method)) {
     headers['Content-Type'] = incomingContentType;
   }
 

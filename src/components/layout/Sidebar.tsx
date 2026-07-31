@@ -18,7 +18,8 @@ import {
   Bell,
   LogOut,
   User as UserIcon,
-  SendHorizontal
+  SendHorizontal,
+  ShieldAlert
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -46,6 +47,7 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
 
   // Menu items com verificação de permissões
   const isMaster = user?.role === 'master';
+  const isAdminOrMaster = user?.role === 'master' || user?.role === 'admin';
 
   const menuItems = [
     {
@@ -80,6 +82,12 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
       href: '/configuracao-ia',
       icon: Bot,
       masterOnly: true
+    },
+    {
+      title: 'Auditoria da IA',
+      href: '/auditoria-ia',
+      icon: ShieldAlert,
+      adminOnly: true
     },
     {
       title: 'Relatórios',
@@ -119,7 +127,11 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
       href: '/login',
       icon: LogOut
     }
-  ].filter(item => !item.masterOnly || isMaster);
+  ].filter(item => {
+    if (item.masterOnly && !isMaster) return false;
+    if (item.adminOnly && !isAdminOrMaster) return false;
+    return true;
+  });
 
   // Função para obter iniciais do nome do usuário
   const getInitials = (name?: string, email?: string) => {

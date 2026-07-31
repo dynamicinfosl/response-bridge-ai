@@ -43,8 +43,25 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Variável VITE_MK_BASE_URL não configurada no Vercel e mk_base_url não encontrado no Supabase.' });
   }
 
-  // Remove o prefixo /api/mk do caminho para obter o path real do MK
-  const originalPath = req.url.replace(/^\/api\/mk/, '') || '/';
+  // Obtém o caminho correto considerando o roteamento catch-all [...path] do Vercel
+  let originalPath = '';
+  if (req.query && Array.isArray(req.query.path)) {
+    originalPath = '/' + req.query.path.join('/');
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      urlObj.searchParams.delete('path');
+      const queryString = urlObj.searchParams.toString();
+      if (queryString) {
+        originalPath += `?${queryString}`;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  } else if (req.query && typeof req.query.path === 'string') {
+    originalPath = '/' + req.query.path;
+  } else {
+    originalPath = (req.url || '').replace(/^\/api\/mk/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+  }
   const targetUrl = `${mkBase.replace(/\/$/, '')}${originalPath}`;
 
   const headers = {

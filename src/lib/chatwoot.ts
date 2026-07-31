@@ -22,10 +22,29 @@ async function chatwootFetch<T>(endpoint: string, options?: RequestInit): Promis
     delete headers['Content-Type'];
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    // Se o proxy retornar 502 ou 504, arremessa exceção para acionar o fallback direto
+    if (response.status === 502 || response.status === 504) {
+      throw new Error(`Proxy responded with status ${response.status}`);
+    }
+  } catch (proxyErr) {
+    if (API_URL) {
+      const directUrl = `${API_URL.replace(/\/$/, '')}/api/v1/accounts/${ACCOUNT_ID}${endpoint}`;
+      console.warn(`[Chatwoot Proxy Fallback] Proxy falhou (${url}). Tentando requisição direta: ${directUrl}`, proxyErr);
+      response = await fetch(directUrl, {
+        ...options,
+        headers,
+      });
+    } else {
+      throw proxyErr;
+    }
+  }
 
   if (!response.ok) {
     const error = await response.text();

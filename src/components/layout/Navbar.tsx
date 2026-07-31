@@ -132,6 +132,8 @@ export const Navbar = ({ sidebarCollapsed, onToggleSidebar, notifications = [], 
         return 'Relatórios';
       case '/configuracao-ia':
         return 'Configuração IA';
+      case '/auditoria-ia':
+        return 'Auditoria da IA';
       case '/colaboradores':
         return 'Colaboradores';
       case '/configuracoes':
