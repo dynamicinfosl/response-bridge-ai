@@ -368,7 +368,19 @@ const mergeStickyInterventions = (previous: StickyChat[] | undefined, next: Chat
     const prev = prevMap.get(id);
     const incoming = chat as StickyChat;
 
-    if (incoming._fromEscalationOnly && prev && !prev._fromEscalationOnly) {
+    const incomingHandled =
+      Boolean(incoming.assigneeId) ||
+      (incoming.labels || []).some((l) => String(l).toLowerCase() === 'agente-off');
+
+    if (incoming._fromEscalationOnly && prev && !prev._fromEscalationOnly && !incomingHandled) {
+      const prevHandled =
+        Boolean(prev.assigneeId) ||
+        (prev.labels || []).some((l) => String(l).toLowerCase() === 'agente-off');
+      if (prevHandled) {
+        // Já foi assumida antes — não reabre intervenção via fantasma de escalação
+        nextMap.set(id, { ...prev, _fromEscalationOnly: false });
+        return;
+      }
       nextMap.set(id, {
         ...prev,
         labels: ensureInterventionLabel(incoming.labels?.length ? incoming.labels : prev.labels || []),
@@ -386,6 +398,7 @@ const mergeStickyInterventions = (previous: StickyChat[] | undefined, next: Chat
     if (nextMap.has(id)) return;
     if (!hasInterventionLabel(old.labels || [])) return;
     if (old.assigneeId || old.attendant) return;
+    if ((old.labels || []).some((l) => String(l).toLowerCase() === 'agente-off')) return;
     if (old._fromEscalationOnly) return; // não gruda fantasma só-de-escalação
 
     const status = String(old.status || '').toLowerCase();
@@ -635,14 +648,19 @@ export function useChats() {
           const assignedUser = mappedChat.assigneeId ? usersByChatwootId.get(String(mappedChat.assigneeId)) : null;
           const esc = escaladosByConversation.get(String(mappedChat.id));
           const hasHumanAssignee = Boolean(mappedChat.assigneeId);
+          const hasAgenteOff = (mappedChat.labels || []).some(
+            (label) => String(label).toLowerCase() === 'agente-off'
+          );
+          // Humano já está no atendimento (atribuído OU IA pausada) — nunca reabrir fila de intervenção
+          const humanHandling = hasHumanAssignee || hasAgenteOff;
 
           // Sempre anexa o resumo da escalação quando existir no Supabase
           if (esc?.mini_resumo) {
             mappedChat.escalationSummary = esc.mini_resumo;
           }
 
-          // Humano do sistema já assumiu → tira da fila de pendentes (mesmo com registro antigo de escalação)
-          if (assignedUser && hasHumanAssignee) {
+          if (humanHandling) {
+            // TakeOver / Intervir: remove labels de pendência mesmo com registro antigo em atendimentos_escalados
             mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
               const normalized = label.toLowerCase();
               return normalized !== 'precisa_atendimento' &&
@@ -1160,6 +1178,8 @@ export function useTakeOverChat() {
         if (variables.attendantArea) {
           chat.attendantArea = formatUserArea(variables.attendantArea);
         }
+        // Marca como já assumida para o sticky/refetch não reabrir o modal
+        (chat as any)._fromEscalationOnly = false;
         return chat;
       });
     },

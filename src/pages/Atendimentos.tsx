@@ -1514,17 +1514,32 @@ const Atendimentos = () => {
     } else if (statusFilter === 'needs_human') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
-      // Já assumida por humano → sai da fila de pendentes (evita fantasmas de 6d/12d)
-      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
+      // Já assumida por humano / IA pausada → sai da fila de pendentes
+      if (
+        chat.assigneeId ||
+        formatAttendantDisplay(chat) ||
+        chatLabels.some((l) => normalizeText(l) === 'agente-off') ||
+        Boolean(localHumanAttendants[chat.id])
+      ) return false;
     } else if (statusFilter === 'out_of_hours') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
-      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
+      if (
+        chat.assigneeId ||
+        formatAttendantDisplay(chat) ||
+        chatLabels.some((l) => normalizeText(l) === 'agente-off') ||
+        Boolean(localHumanAttendants[chat.id])
+      ) return false;
       if (!hasOutOfHoursIntervention(chatLabels)) return false;
     } else if (statusFilter === 'weekend_intervention') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
-      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
+      if (
+        chat.assigneeId ||
+        formatAttendantDisplay(chat) ||
+        chatLabels.some((l) => normalizeText(l) === 'agente-off') ||
+        Boolean(localHumanAttendants[chat.id])
+      ) return false;
       if (!hasWeekendIntervention(chatLabels)) return false;
     } else if (statusFilter !== 'all') {
       if (chatStatus !== statusFilter) return false;
@@ -2415,6 +2430,7 @@ const Atendimentos = () => {
                               size="sm"
                               className="h-7 text-[10px] px-2 bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
                               onClick={() => {
+                                setViewMessagesForInterventionChat(prev => ({ ...prev, [selectedChatData.id]: true }));
                                 setLocalHumanAttendants(prev => ({
                                   ...prev,
                                   [selectedChatData.id]: {
@@ -2536,7 +2552,15 @@ const Atendimentos = () => {
                   {(() => {
                     const isClosed = (selectedChatData.status || (selectedChatData as any).statusP) === 'concluido';
                     const hasIntervention = selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
-                    const showOverlay = hasIntervention && !isClosed && !viewMessagesForInterventionChat[selectedChatData.id];
+                    const alreadyHandling =
+                      Boolean(selectedChatData.assigneeId) ||
+                      Boolean(localHumanAttendants[selectedChatData.id]) ||
+                      (selectedChatData.labels || []).some((l: string) => l.toLowerCase() === 'agente-off');
+                    const showOverlay =
+                      hasIntervention &&
+                      !isClosed &&
+                      !alreadyHandling &&
+                      !viewMessagesForInterventionChat[selectedChatData.id];
 
                     if (!showOverlay) return null;
 
