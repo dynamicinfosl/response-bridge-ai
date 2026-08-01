@@ -1514,13 +1514,17 @@ const Atendimentos = () => {
     } else if (statusFilter === 'needs_human') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
+      // Já assumida por humano → sai da fila de pendentes (evita fantasmas de 6d/12d)
+      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
     } else if (statusFilter === 'out_of_hours') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
+      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
       if (!hasOutOfHoursIntervention(chatLabels)) return false;
     } else if (statusFilter === 'weekend_intervention') {
       if (isClosedChat) return false;
       if (!hasHumanIntervention) return false;
+      if (chat.assigneeId || formatAttendantDisplay(chat)) return false;
       if (!hasWeekendIntervention(chatLabels)) return false;
     } else if (statusFilter !== 'all') {
       if (chatStatus !== statusFilter) return false;
@@ -1608,44 +1612,35 @@ const Atendimentos = () => {
     searchChats.find(chat => chat.id === selectedChat) ||
     mergedChats.find(chat => chat.id === selectedChat);
 
-  // Ordenar por prioridade de tempo de espera (crítico > alerta > normal)
+  // Ordenação: SEMPRE mais recente → mais antigo (pendentes de humano incluídos)
   const sortedChats = [...mergedChats].sort((a, b) => {
-    const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
-    const specialPriority = (chat: any) => {
-      if (!['needs_human', 'out_of_hours', 'weekend_intervention'].includes(statusFilter)) return 3;
-      const labels = chat.labels || [];
-      if (hasWeekendIntervention(labels)) return 0;
-      if (hasOutOfHoursIntervention(labels)) return 1;
-      if (needsHumanIntervention(labels)) return 2;
-      return 3;
+    const chatTs = (chat: Chat) => {
+      const raw = chat.updatedAt || chat.time || chat.createdAt || 0;
+      const ts = new Date(raw).getTime();
+      return Number.isFinite(ts) ? ts : 0;
     };
 
-    const specialA = specialPriority(a);
-    const specialB = specialPriority(b);
-    if (specialA !== specialB) return specialA - specialB;
-    
-    // Override local se respondido recentemente (menos de 3 min)
-    const isAReplied = localRepliedChats[a.id] && (Date.now() - localRepliedChats[a.id] < 180000);
-    const isBReplied = localRepliedChats[b.id] && (Date.now() - localRepliedChats[b.id] < 180000);
-    
-    const statusA = isAReplied ? 'normal' : (a.statusAlerta || 'normal');
-    const statusB = isBReplied ? 'normal' : (b.statusAlerta || 'normal');
-    
-    const prioA = alertaPriority[statusA] ?? 2;
-    const prioB = alertaPriority[statusB] ?? 2;
-
-    // Primeiro: ordenar por prioridade de alerta
-    if (prioA !== prioB) return prioA - prioB;
-
-    // Dentro da mesma prioridade de alerta: quem espera mais aparece primeiro
-    if (prioA < 2 && a.waitingMinutes && b.waitingMinutes) {
-      return (b.waitingMinutes || 0) - (a.waitingMinutes || 0);
+    // Filas de intervenção / fora do expediente: só por recência (sem priorizar label)
+    if (['needs_human', 'out_of_hours', 'weekend_intervention'].includes(statusFilter)) {
+      const timeA = chatTs(a);
+      const timeB = chatTs(b);
+      if (timeA !== timeB) return timeB - timeA;
+      return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
     }
 
-    // Para conversas normais: mais recente primeiro (updatedAt desc)
-    const timeA = new Date(a.updatedAt || a.time || 0).getTime();
-    const timeB = new Date(b.updatedAt || b.time || 0).getTime();
-    return timeB - timeA;
+    const alertaPriority: Record<string, number> = { critico: 0, alerta: 1, normal: 2 };
+    const isAReplied = localRepliedChats[a.id] && (Date.now() - localRepliedChats[a.id] < 180000);
+    const isBReplied = localRepliedChats[b.id] && (Date.now() - localRepliedChats[b.id] < 180000);
+    const statusA = isAReplied ? 'normal' : (a.statusAlerta || 'normal');
+    const statusB = isBReplied ? 'normal' : (b.statusAlerta || 'normal');
+    const prioA = alertaPriority[statusA] ?? 2;
+    const prioB = alertaPriority[statusB] ?? 2;
+    if (prioA !== prioB) return prioA - prioB;
+
+    const timeA = chatTs(a);
+    const timeB = chatTs(b);
+    if (timeA !== timeB) return timeB - timeA;
+    return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
   });
 
   // Paginar chats: mostrar apenas os primeiros X chats
@@ -1750,11 +1745,11 @@ const Atendimentos = () => {
                     disabled={myChatsMode}
                     className="h-7 flex-1 text-[10px] border rounded-md px-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
                   >
+                    <option value="out_of_hours">Pendentes fora do expediente</option>
+                    <option value="weekend_intervention">Pendentes do fim de semana</option>
+                    <option value="needs_human">Pendentes de humano</option>
                     <option value="active">Status: Em andamento</option>
                     <option value="concluido">Status: Concluído</option>
-                    <option value="needs_human">Pendentes de humano</option>
-                    <option value="weekend_intervention">Pendentes do fim de semana</option>
-                    <option value="out_of_hours">Pendentes fora do expediente</option>
                     <option value="all">Status: Todos</option>
                   </select>
                   <select
@@ -2019,17 +2014,17 @@ const Atendimentos = () => {
                                 </span>
                               </div>
                               {(() => {
-                                const msg = chat.lastMessage || 'Iniciando conversa...';
-                                const isSummary = msg.includes('[Resumo IA]');
+                                // Preview da lista = última mensagem da conversa (não o resumo de intervenção)
+                                const rawMsg = chat.lastMessage || '';
+                                const msg = rawMsg.replace(/^\[Intervenção\]\s*/i, '').replace(/^\[Resumo IA\]\s*/i, '').trim()
+                                  || 'Iniciando conversa...';
+                                const isClosedSummary = (chat.lastMessage || '').includes('[Resumo IA]');
                                 const isActivity = chat.lastMessageSender === 'activity';
 
-                                if (isSummary) {
-                                  const textAfter = msg.replace('[Resumo IA]', '').trim();
+                                if (isClosedSummary) {
                                   return (
                                     <div className="flex items-start gap-1.5 mb-2 w-full">
-                                      {chat.lastMessageSender === 'agent' && (
-                                        <Bot className="w-3.5 h-3.5 mt-1 text-primary flex-shrink-0" />
-                                      )}
+                                      <Bot className="w-3.5 h-3.5 mt-1 text-primary flex-shrink-0" />
                                       <div className="flex flex-col gap-1 min-w-0 flex-1">
                                         <div className="flex items-center">
                                           <span className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary border border-primary/20">
@@ -2040,7 +2035,7 @@ const Atendimentos = () => {
                                           "text-[13px] leading-snug line-clamp-3 whitespace-pre-wrap break-words",
                                           displayUnread > 0 ? "text-foreground font-semibold" : "text-muted-foreground opacity-90"
                                         )}>
-                                          {textAfter || msg}
+                                          {msg}
                                         </p>
                                       </div>
                                     </div>
@@ -2537,6 +2532,119 @@ const Atendimentos = () => {
                     );
                   })()}
 
+                  {/* Overlay de Intervenção Humana (Escalado pelo n8n) */}
+                  {(() => {
+                    const isClosed = (selectedChatData.status || (selectedChatData as any).statusP) === 'concluido';
+                    const hasIntervention = selectedChatData.labels?.some((l: string) => l.toLowerCase() === 'precisa_atendimento');
+                    const showOverlay = hasIntervention && !isClosed && !viewMessagesForInterventionChat[selectedChatData.id];
+
+                    if (!showOverlay) return null;
+
+                    let summaryText = selectedChatData.escalationSummary || '';
+                    if (!summaryText && (selectedChatData.lastMessage || '').includes('[Intervenção]')) {
+                      summaryText = (selectedChatData.lastMessage || '').replace('[Intervenção]', '').trim();
+                    }
+                    if (!summaryText) {
+                      if (messages && messages.length > 0) {
+                        for (let i = messages.length - 1; i >= 0; i--) {
+                          const m = messages[i];
+                          const content = m.content || '';
+                          if (content.includes('*Resumo da conversa*:')) {
+                            const parts = content.split('*Resumo da conversa*:');
+                            if (parts.length > 1) {
+                              summaryText = parts[1].trim().replace(/^"|"$/g, '');
+                            }
+                            break;
+                          }
+                          if (content.includes('Resumo da conversa:')) {
+                            const parts = content.split(/Resumo da conversa:\s*/i);
+                            if (parts.length > 1) {
+                              summaryText = parts[1].trim().replace(/^"|"$/g, '');
+                            }
+                            break;
+                          }
+                          // Nota privada do n8n (Assistente desabilitado...)
+                          if (m.isPrivate && /assistente desabilitado/i.test(content) && content.includes('Resumo')) {
+                            const parts = content.split(/Resumo da conversa\*?:\s*/i);
+                            if (parts.length > 1) {
+                              summaryText = parts[1].trim().replace(/^"|"$/g, '');
+                              break;
+                            }
+                          }
+                        }
+                      }
+                    }
+                    if (!summaryText) {
+                      summaryText = 'Resumo ainda não disponível neste painel. Use "Ver Mensagens" — a nota privada da IA costuma ter o detalhe.';
+                    }
+
+                    return (
+                      <div className="absolute inset-0 z-30 flex items-center justify-center p-3 bg-black/20 backdrop-blur-[1px]">
+                        <Card className="w-full max-w-sm shadow-2xl border-red-500/30 animate-in fade-in zoom-in-95 duration-200">
+                          <CardHeader className="text-center pb-1 pt-4">
+                            <div className="mx-auto bg-red-100 w-8 h-8 rounded-full flex items-center justify-center mb-1.5 shadow-inner">
+                              <AlertCircle className="w-4 h-4 text-red-600 animate-pulse" />
+                            </div>
+                            <CardTitle className="text-base text-red-700">Intervenção Solicitada</CardTitle>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">A IA identificou a necessidade de um atendente humano.</p>
+                          </CardHeader>
+                          <CardContent className="space-y-2 px-4 pb-4">
+                            <div className="bg-[#f8f9fa] p-2.5 rounded-lg text-left border border-border/60 shadow-sm max-h-28 overflow-y-auto">
+                              <h4 className="text-[10px] font-bold text-muted-foreground mb-1 flex items-center uppercase tracking-wider">
+                                <Bot className="w-3 h-3 mr-1 text-primary" /> Resumo da IA
+                              </h4>
+                              <p className="text-[12px] leading-relaxed text-[#54656f] whitespace-pre-wrap">{summaryText}</p>
+                            </div>
+
+                            <div className="flex gap-2 pt-1 border-t border-border/50 mt-2">
+                              <Button
+                                className="flex-1 h-7 text-[11px] shadow-sm bg-red-600 hover:bg-red-700 text-white"
+                                onClick={() => {
+                                  // Fecha o overlay antes do takeOver para não reaparecer durante o refetch
+                                  setViewMessagesForInterventionChat(prev => ({ ...prev, [selectedChatData.id]: true }));
+                                  setLocalHumanAttendants(prev => ({
+                                    ...prev,
+                                    [selectedChatData.id]: {
+                                      name: user?.name,
+                                      area: user?.area || undefined,
+                                    },
+                                  }));
+                                  takeOverChatMutation.mutate({
+                                    id: selectedChatData.id,
+                                    labels: selectedChatData.labels,
+                                    attendantId: user?.chatwoot_id,
+                                    attendantArea: user?.area || null
+                                  });
+                                }}
+                                disabled={takeOverChatMutation.isPending}
+                              >
+                                {takeOverChatMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <UserCheck className="w-3 h-3 mr-1" />}
+                                Começar a Atender
+                              </Button>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                className="flex-1 h-7 text-[11px]"
+                                variant="outline"
+                                onClick={() => setViewMessagesForInterventionChat(prev => ({ ...prev, [selectedChatData.id]: true }))}
+                              >
+                                <MessageSquare className="w-3 h-3 mr-1" />
+                                Ver Mensagens
+                              </Button>
+                              <Button
+                                className="flex-1 h-7 px-2 text-[11px]"
+                                variant="outline"
+                                onClick={() => setShowTransferModal(true)}
+                              >
+                                <UserPlus className="w-3 h-3 mr-1" />
+                                Transferir
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    );
+                  })()}
 
                   <div
                     ref={messagesContainerRef}

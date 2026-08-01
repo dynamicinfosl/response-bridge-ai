@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useChats } from '@/hooks/useChats';
 import logoImage from '../../assets/Adapt-Link-Logo.png';
 
 interface SidebarProps {
@@ -44,6 +45,19 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
   // useAuth deve estar sempre disponível pois Sidebar está dentro do AuthProvider via Layout
   const { user, signOut } = useAuth();
   const { canAccessAdvancedSettings } = usePermissions();
+  const { data: chats } = useChats();
+
+  // Fila fora do expediente / fim de semana: labels de intervenção, abertas e sem atendente
+  const offHoursPendingCount = useMemo(() => {
+    if (!Array.isArray(chats)) return 0;
+    return chats.filter((chat: any) => {
+      const status = String(chat.status || '').toLowerCase();
+      if (status === 'resolved' || status === 'concluido') return false;
+      if (chat.assigneeId) return false;
+      const labels = (chat.labels || []).map((l: string) => String(l).toLowerCase());
+      return labels.includes('fora_exp_intervencao') || labels.includes('fim_semana_intervencao');
+    }).length;
+  }, [chats]);
 
   // Menu items com verificação de permissões
   const isMaster = user?.role === 'master';
@@ -255,7 +269,7 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
                     to={item.href}
                     onClick={isMobile ? onMobileClose : undefined}
                     className={cn(
-                      "flex items-center px-3 py-4 text-sm font-medium rounded-lg transition-all duration-200",
+                      "relative flex items-center px-3 py-4 text-sm font-medium rounded-lg transition-all duration-200",
                       "hover:bg-primary-muted hover:text-primary",
                       isActive && "bg-primary text-primary-foreground shadow-primary",
                       collapsed && !isMobile && "justify-center px-2"
@@ -265,7 +279,27 @@ export const Sidebar = ({ collapsed, onToggle, mobileOpen = false, onMobileClose
                       "h-5 w-5",
                       (!collapsed || isMobile) && "mr-3"
                     )} />
-                    {(!collapsed || isMobile) && <span>{item.title}</span>}
+                    {(!collapsed || isMobile) && (
+                      <span className="flex-1 flex items-center justify-between gap-2">
+                        <span>{item.title}</span>
+                        {item.href === '/atendimentos' && offHoursPendingCount > 0 && (
+                          <span
+                            title="Pendentes fora do expediente / fim de semana"
+                            className={cn(
+                              "min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
+                              isActive
+                                ? "bg-primary-foreground/20 text-primary-foreground"
+                                : "bg-amber-500 text-white"
+                            )}
+                          >
+                            {offHoursPendingCount > 99 ? '99+' : offHoursPendingCount}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {collapsed && !isMobile && item.href === '/atendimentos' && offHoursPendingCount > 0 && (
+                      <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500" title={`${offHoursPendingCount} fora do expediente`} />
+                    )}
                   </NavLink>
                 </li>
               );

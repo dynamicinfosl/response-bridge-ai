@@ -40,16 +40,33 @@ export interface TurnoConversa {
   session_id?: string;
 }
 
+export interface SupervisorIntervencao {
+  id: number;
+  id_conversa: string;
+  telefone: string;
+  setor: string;
+  acao: 'corrigir' | 'bloquear_escalar' | string;
+  aprovado: boolean;
+  violacoes: string[];
+  motivo: string;
+  resposta_proposta?: string;
+  resposta_final?: string;
+  created_at: string;
+}
+
 export interface AuditoriaResponse {
   ok: boolean;
   gerado_em: string;
   modo: 'lista' | 'detalhe' | 'conversa';
   relatorios: RelatorioAuditoria[];
   achados: AchadoAuditoria[];
+  supervisor?: SupervisorIntervencao[];
+  supervisor_page?: number;
+  supervisor_limite?: number;
   turnos?: TurnoConversa[];
   id_conversa?: string;
   telefone?: string;
-  totais: { relatorios: number; achados: number; turnos?: number };
+  totais: { relatorios: number; achados: number; turnos?: number; supervisor?: number };
   error?: string;
 }
 
@@ -84,13 +101,17 @@ async function fetchAuditoria(params: Record<string, string | number>): Promise<
   }
 }
 
-export function useAuditoriaLista() {
+export const SUPERVISOR_PAGE_SIZE = 20;
+
+export function useAuditoriaLista(supervisorPage = 1) {
   return useQuery({
-    queryKey: ['auditoria-ia', 'lista'],
+    queryKey: ['auditoria-ia', 'lista', supervisorPage],
     queryFn: () =>
       fetchAuditoria({
         limite_relatorios: 50,
         limite_achados: 80,
+        supervisor_page: supervisorPage,
+        supervisor_limite: SUPERVISOR_PAGE_SIZE,
       }),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
@@ -133,6 +154,16 @@ export const TIPO_ACHADO_LABEL: Record<string, string> = {
   promessa_indevida: 'Promessa indevida',
   pix_enviado: 'Pix enviado',
   tool_falhou: 'Ferramenta falhou',
+  quebra_persona: 'Quebra de persona',
+  diagnostico_em_bloco: 'Diagnóstico em bloco',
+  fora_do_escopo_tecnico: 'Fora do escopo técnico',
+  supervisor_corrigiu: 'Supervisor corrigiu',
+  supervisor_bloqueou: 'Supervisor bloqueou',
+};
+
+export const SUPERVISOR_ACAO_LABEL: Record<string, string> = {
+  corrigir: 'Corrigiu resposta',
+  bloquear_escalar: 'Bloqueou e escalou',
 };
 
 export const GRAVIDADE_LABEL: Record<string, string> = {

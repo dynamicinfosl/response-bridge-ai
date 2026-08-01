@@ -42,6 +42,9 @@ import {
   AchadoAuditoria,
   GRAVIDADE_LABEL,
   RelatorioAuditoria,
+  SUPERVISOR_ACAO_LABEL,
+  SUPERVISOR_PAGE_SIZE,
+  SupervisorIntervencao,
   TIPO_ACHADO_LABEL,
   TurnoConversa,
   useAuditoriaConversa,
@@ -133,17 +136,21 @@ function ConversaModal({
   onOpenChange,
   idConversa,
   achado,
+  supervisor,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   idConversa: string | null;
   achado: AchadoAuditoria | null;
+  supervisor?: SupervisorIntervencao | null;
 }) {
   const { data, isLoading, error } = useAuditoriaConversa(open ? idConversa : null);
   const turnos = data?.turnos || [];
   const chatwootUrl = import.meta.env.VITE_CHATWOOT_API_URL
     ? `${import.meta.env.VITE_CHATWOOT_API_URL}/app/accounts/1/conversations/${idConversa}`
     : null;
+  const proposta = supervisor?.resposta_proposta?.trim() || '';
+  const substituida = supervisor?.resposta_final?.trim() || '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -175,6 +182,26 @@ function ConversaModal({
                 <p className="text-xs text-foreground bg-muted/40 rounded-md p-2 leading-relaxed">
                   {achado.detalhe}
                 </p>
+              )}
+              {supervisor && (proposta || substituida) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 mb-1">
+                      LLM principal iria enviar
+                    </p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+                      {proposta || '— (não registrado neste evento)'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800 mb-1">
+                      Supervisor substituiu por
+                    </p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+                      {substituida || '— (não registrado neste evento)'}
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           </DialogDescription>
@@ -445,15 +472,143 @@ function RelatorioCard({
   );
 }
 
+function SupervisorTable({
+  itens,
+  onOpenConversa,
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  itens: SupervisorIntervencao[];
+  onOpenConversa: (item: SupervisorIntervencao) => void;
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+
+  if (!itens.length && total === 0) {
+    return (
+      <p className="text-sm text-muted-foreground py-6 text-center">
+        Nenhuma correção/bloqueio do supervisor registrado ainda.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[110px]">Quando</TableHead>
+              <TableHead className="w-[90px]">Conversa</TableHead>
+              <TableHead className="w-[100px]">Ação</TableHead>
+              <TableHead className="w-[90px]">Setor</TableHead>
+              <TableHead>Motivo / violações</TableHead>
+              <TableHead className="w-[70px]" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {itens.map((item) => (
+              <TableRow
+                key={item.id}
+                className="cursor-pointer hover:bg-muted/40"
+                onClick={() => onOpenConversa(item)}
+              >
+                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                  {fmtShort(item.created_at)}
+                </TableCell>
+                <TableCell className="text-xs font-mono">#{item.id_conversa}</TableCell>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'text-[10px]',
+                      item.acao === 'bloquear_escalar'
+                        ? 'bg-destructive/10 text-destructive border-destructive/20'
+                        : 'bg-amber-500/10 text-amber-800 border-amber-500/20'
+                    )}
+                  >
+                    {SUPERVISOR_ACAO_LABEL[item.acao] || item.acao}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs capitalize">{item.setor || '—'}</TableCell>
+                <TableCell className="text-xs">
+                  <p className="line-clamp-2">{item.motivo || '—'}</p>
+                  {item.violacoes?.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {item.violacoes.join(', ')}
+                    </p>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenConversa(item);
+                    }}
+                  >
+                    Ver
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          Mostrando {from}–{to} de {total}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
+          >
+            Anterior
+          </Button>
+          <span className="tabular-nums">
+            Página {page} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            disabled={page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
+          >
+            Próxima
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const AuditoriaIA = () => {
-  const { data: lista, isLoading, isFetching, refetch, error } = useAuditoriaLista();
+  const [supervisorPage, setSupervisorPage] = useState(1);
+  const { data: lista, isLoading, isFetching, refetch, error } = useAuditoriaLista(supervisorPage);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [conversaAberta, setConversaAberta] = useState<{
     id: string;
     achado: AchadoAuditoria;
+    supervisor?: SupervisorIntervencao | null;
   } | null>(null);
 
   const relatorios = lista?.relatorios || [];
+  const supervisorItens = lista?.supervisor || [];
+  const supervisorTotal = lista?.totais?.supervisor ?? supervisorItens.length;
   const activeId = selectedId ?? relatorios[0]?.id ?? null;
 
   const {
@@ -465,9 +620,27 @@ const AuditoriaIA = () => {
   const relatorioAtivo = detalhe?.relatorios?.[0] || relatorios.find((r) => r.id === activeId) || null;
   const achadosAtivos = detalhe?.achados || [];
 
-  const abrirConversa = (achado: AchadoAuditoria) => {
+  const abrirConversa = (achado: AchadoAuditoria, supervisor?: SupervisorIntervencao | null) => {
     if (!achado.id_conversa) return;
-    setConversaAberta({ id: String(achado.id_conversa), achado });
+    setConversaAberta({ id: String(achado.id_conversa), achado, supervisor: supervisor || null });
+  };
+
+  const abrirConversaSupervisor = (item: SupervisorIntervencao) => {
+    if (!item.id_conversa) return;
+    abrirConversa(
+      {
+        id: item.id,
+        auditado_em: item.created_at,
+        id_conversa: item.id_conversa,
+        cliente: item.telefone || '',
+        tipo_achado: item.acao === 'bloquear_escalar' ? 'supervisor_bloqueou' : 'supervisor_corrigiu',
+        gravidade: item.acao === 'bloquear_escalar' ? 'alta' : 'media',
+        detalhe: item.motivo || '',
+        trecho: (item.violacoes || []).join(', '),
+        ocorrido_em: item.created_at,
+      },
+      item
+    );
   };
 
   const resumoGeral = useMemo(() => {
@@ -488,7 +661,7 @@ const AuditoriaIA = () => {
               <h1 className="text-2xl font-bold text-foreground">Auditoria da IA</h1>
             </div>
             <p className="text-sm text-muted-foreground">
-              Relatórios diários de qualidade do Marcos — cobrança indevida, repetições, promessas e falhas de ferramenta.
+              Relatórios diários de qualidade do Marcos e intervenções em tempo real do supervisor pré-envio.
             </p>
           </div>
           <Button
@@ -515,7 +688,7 @@ const AuditoriaIA = () => {
         )}
 
         {resumoGeral && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-5">
                 <div className="flex items-center justify-between">
@@ -555,6 +728,17 @@ const AuditoriaIA = () => {
             <Card>
               <CardContent className="pt-5">
                 <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Supervisor (correções)</p>
+                  <Wrench className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <p className="text-lg font-semibold mt-2">
+                  {supervisorTotal}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <div className="flex items-center justify-between">
                   <p className="text-xs text-muted-foreground">Relatórios guardados</p>
                   <TrendingDown className="h-4 w-4 text-muted-foreground" />
                 </div>
@@ -568,6 +752,37 @@ const AuditoriaIA = () => {
             </Card>
           </div>
         )}
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">
+              Supervisor pré-envio
+              <span className="text-muted-foreground font-normal ml-2 text-sm">
+                ({supervisorTotal})
+              </span>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Conversas em que o supervisor corrigiu ou bloqueou a resposta do Marcos antes do envio.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="flex items-center py-8 text-muted-foreground text-sm">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Carregando...
+              </div>
+            ) : (
+              <SupervisorTable
+                itens={supervisorItens}
+                onOpenConversa={abrirConversaSupervisor}
+                page={supervisorPage}
+                pageSize={SUPERVISOR_PAGE_SIZE}
+                total={supervisorTotal}
+                onPageChange={setSupervisorPage}
+              />
+            )}
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <Card className="lg:col-span-4">
@@ -727,8 +942,8 @@ const AuditoriaIA = () => {
 
         <Separator />
         <p className="text-xs text-muted-foreground">
-          Fonte: tabelas <code className="bg-muted px-1 rounded">auditoria_ia_relatorios</code> e{' '}
-          <code className="bg-muted px-1 rounded">auditoria_ia_financeiro</code> · workflow diário às 07h ·
+          Fonte: <code className="bg-muted px-1 rounded">auditoria_ia_*</code> (batch 07h) e{' '}
+          <code className="bg-muted px-1 rounded">auditoria_supervisor_financeiro</code> (tempo real) ·
           acesso restrito a master/admin.
         </p>
       </div>
@@ -740,6 +955,7 @@ const AuditoriaIA = () => {
         }}
         idConversa={conversaAberta?.id || null}
         achado={conversaAberta?.achado || null}
+        supervisor={conversaAberta?.supervisor || null}
       />
     </Layout>
   );

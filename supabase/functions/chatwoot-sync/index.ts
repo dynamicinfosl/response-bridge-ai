@@ -6,7 +6,8 @@ const CHATWOOT_ACCOUNT_ID = Deno.env.get('CHATWOOT_ACCOUNT_ID') || '1';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-const CACHE_TTL_MS = 6_000;
+// TTL alinhado ao polling do painel (~15s). TTL baixo demais faz a lista oscilar a cada refresh.
+const CACHE_TTL_MS = 20_000;
 const MAX_PAGES = 3;
 const FETCH_TIMEOUT_MS = 8_000;
 const LOCK_TIMEOUT_MS = 30_000;

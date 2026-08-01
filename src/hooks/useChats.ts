@@ -172,7 +172,14 @@ export const mapChatwootToChat = (conv: any): Chat => {
     }
   };
 
-  const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
+  // Prefere mensagem pública (cliente/agente). Nota privada/sistema do resumo de
+  // intervenção NÃO deve virar o "time" da lista — isso fazia o horário pular.
+  const msgCandidates = [conv.last_non_activity_message, ...(Array.isArray(conv.messages) ? conv.messages : [])].filter(Boolean);
+  const lastMsg =
+    msgCandidates.find((m: any) => !m.private && m.message_type !== 2) ||
+    msgCandidates.find((m: any) => !m.private) ||
+    msgCandidates[0] ||
+    null;
   let lastMsgContent = lastMsg?.content || '';
   const lastMessageAt = getISO(lastMsg?.created_at);
   const timestamp = lastMessageAt ||
@@ -321,7 +328,88 @@ const hasSectorLabel = (labels: string[] = []) => {
   });
 };
 
+const STICKY_INTERVENTION_MS = 90 * 1000;
+const STICKY_MAX_AGE_MS = 6 * 60 * 60 * 1000; // só gruda conversas com atividade < 6h
+
+const hasInterventionLabel = (labels: string[] = []) =>
+  labels.some((label) => {
+    const n = String(label).toLowerCase();
+    return n === 'precisa_atendimento' || n === 'fora_exp_intervencao' || n === 'fim_semana_intervencao';
+  });
+
+const ensureInterventionLabel = (labels: string[] = []) => {
+  const set = new Set((labels || []).map(String));
+  if (![...set].some((l) => l.toLowerCase() === 'precisa_atendimento')) {
+    set.add('precisa_atendimento');
+  }
+  return Array.from(set);
+};
+
+const chatActivityTs = (chat: Chat) => {
+  const ts = new Date(chat.updatedAt || chat.time || chat.createdAt || 0).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+type StickyChat = Chat & { _stickyUntil?: number; _fromEscalationOnly?: boolean };
+
+/**
+ * Mantém por pouco tempo conversas RECENTES de intervenção se o sync oscilar.
+ * Se o fetch trouxer só o registro de escalação (sem Chatwoot), preserva
+ * horário/preview da versão Chatwoot anterior — evita pular entre
+ * "hora da última mensagem" e "hora do resumo".
+ */
+const mergeStickyInterventions = (previous: StickyChat[] | undefined, next: Chat[]): StickyChat[] => {
+  const now = Date.now();
+  const prevMap = new Map((previous || []).map((c) => [String(c.id), c]));
+  const nextMap = new Map<string, StickyChat>();
+
+  next.forEach((chat) => {
+    const id = String(chat.id);
+    const prev = prevMap.get(id);
+    const incoming = chat as StickyChat;
+
+    if (incoming._fromEscalationOnly && prev && !prev._fromEscalationOnly) {
+      nextMap.set(id, {
+        ...prev,
+        labels: ensureInterventionLabel(incoming.labels?.length ? incoming.labels : prev.labels || []),
+        escalationSummary: incoming.escalationSummary || prev.escalationSummary,
+        _fromEscalationOnly: false,
+        _stickyUntil: now + STICKY_INTERVENTION_MS,
+      });
+      return;
+    }
+
+    nextMap.set(id, { ...incoming });
+  });
+
+  prevMap.forEach((old, id) => {
+    if (nextMap.has(id)) return;
+    if (!hasInterventionLabel(old.labels || [])) return;
+    if (old.assigneeId || old.attendant) return;
+    if (old._fromEscalationOnly) return; // não gruda fantasma só-de-escalação
+
+    const status = String(old.status || '').toLowerCase();
+    if (status === 'concluido' || status === 'resolved') return;
+
+    const activity = chatActivityTs(old);
+    if (!activity || now - activity > STICKY_MAX_AGE_MS) return;
+
+    const until = old._stickyUntil ?? now + STICKY_INTERVENTION_MS;
+    if (now >= until) return;
+
+    nextMap.set(id, {
+      ...old,
+      labels: ensureInterventionLabel(old.labels || []),
+      _stickyUntil: until,
+    });
+  });
+
+  return Array.from(nextMap.values());
+};
+
 export function useChats() {
+  const queryClient = useQueryClient();
+
   return useQuery({
     queryKey: ['chats'],
     queryFn: async () => {
@@ -350,14 +438,57 @@ export function useChats() {
 
         // Extrair IDs de conversas visíveis para filtrar as consultas adicionais (otimização de egress)
         const visibleChatIds = conversations.map((c: any) => String(c.id || c.conversation_id || ''));
+        const interventionChatIds = conversations
+          .filter((conv: any) => {
+            const labels = Array.isArray(conv.labels) ? conv.labels.map((label: string) => String(label).toLowerCase()) : [];
+            return labels.some((label: string) =>
+              label === 'precisa_atendimento' ||
+              label === 'fora_exp_intervencao' ||
+              label === 'fim_semana_intervencao'
+            );
+          })
+          .map((c: any) => String(c.id || c.conversation_id || ''))
+          .filter(Boolean);
 
-        // ---------- Buscar atendimentos escalados (com limite reduzido para otimização de egress) ----------
-        const escalados = await safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_escalados?select=id_conversa_chatwoot,telefone,nome,mini_resumo,created_at&order=created_at.desc&limit=100`, {
-          headers: supabaseHeaders
-        }, 6000);
+        // ---------- Buscar atendimentos escalados ----------
+        // CRÍTICO: ordenar por updated_at (upsert em conversa antiga mantém created_at velho).
+        // Busca recente + busca pontual das conversas com label de intervenção.
+        const escaladosSelect = 'id_conversa_chatwoot,telefone,nome,mini_resumo,created_at,updated_at';
+        const recentEscaladosFetch = safeFetchArray(
+          `${supabaseUrl}/rest/v1/atendimentos_escalados?select=${escaladosSelect}&order=updated_at.desc&limit=250`,
+          { headers: supabaseHeaders },
+          6000
+        );
+        const targetedEscaladosFetch = interventionChatIds.length > 0
+          ? safeFetchArray(
+              `${supabaseUrl}/rest/v1/atendimentos_escalados?id_conversa_chatwoot=in.(${interventionChatIds.join(',')})&select=${escaladosSelect}`,
+              { headers: supabaseHeaders },
+              6000
+            )
+          : Promise.resolve([]);
+
+        const [recentEscalados, targetedEscalados] = await Promise.all([
+          recentEscaladosFetch,
+          targetedEscaladosFetch,
+        ]);
+
+        const escaladosMerged = new Map<string, any>();
+        [...(recentEscalados || []), ...(targetedEscalados || [])].forEach((e: any) => {
+          const id = String(e?.id_conversa_chatwoot || '');
+          if (!id) return;
+          const prev = escaladosMerged.get(id);
+          if (!prev) {
+            escaladosMerged.set(id, e);
+            return;
+          }
+          const prevTs = new Date(prev.updated_at || prev.created_at || 0).getTime();
+          const nextTs = new Date(e.updated_at || e.created_at || 0).getTime();
+          if (nextTs >= prevTs) escaladosMerged.set(id, e);
+        });
+        const escalados = Array.from(escaladosMerged.values());
 
         // Identificar IDs de conversas que foram escaladas mas não estão na lista principal
-        const extraEscalatedIds = (escalados || [])
+        const extraEscalatedIds = escalados
           .filter((e: any) => e?.id_conversa_chatwoot && !visibleChatIds.includes(String(e.id_conversa_chatwoot)))
           .map((e: any) => String(e.id_conversa_chatwoot));
 
@@ -371,11 +502,11 @@ export function useChats() {
           const idsParam = `in.(${targetChatIds.join(',')})`;
 
           // Buscar dados adicionais filtrando apenas pelas conversas alvo (redução drástica de egress)
-          const encerradosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?id_conversa_chatwoot=${idsParam}&select=id_conversa_chatwoot,mini_resumo`, {
+          const encerradosFetch = safeFetchArray(`${supabaseUrl}/rest/v1/atendimentos_encerrados?id_conversa_chatwoot=${idsParam}&select=id_conversa_chatwoot,mini_resumo,created_at,encerrado_em&order=created_at.desc`, {
             headers: supabaseHeaders
           }, 6000);
 
-          const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?conversation_id=${idsParam}&select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta&auto_closed=eq.false`, {
+          const monitorFetch = safeFetchArray(`${supabaseUrl}/rest/v1/conversas_monitor?conversation_id=${idsParam}&select=conversation_id,waiting_since,waiting_minutes,atendente_tipo,atendente_nome,status_alerta,last_checked_at&auto_closed=eq.false`, {
             headers: supabaseHeaders
           }, 6000);
 
@@ -393,21 +524,32 @@ export function useChats() {
           users = await getCachedUsers(supabaseUrl, anonKey);
         }
 
-        const encerradosByConversation = new Set(
-          (encerrados || [])
-            .filter((e: any) => e?.id_conversa_chatwoot)
-            .map((e: any) => String(e.id_conversa_chatwoot))
-        );
+        // Último encerramento por conversa (pode haver vários históricos)
+        const encerradosByConversation = new Map<string, any>();
+        (encerrados || []).forEach((e: any) => {
+          const id = String(e?.id_conversa_chatwoot || '');
+          if (!id || encerradosByConversation.has(id)) return;
+          encerradosByConversation.set(id, e);
+        });
 
         const escaladosByConversation = new Map<string, any>();
-        (escalados || [])
-          .filter((e: any) => e?.id_conversa_chatwoot && !encerradosByConversation.has(String(e.id_conversa_chatwoot)))
-          .forEach((e: any) => {
-            const conversationId = String(e.id_conversa_chatwoot);
-            if (!escaladosByConversation.has(conversationId)) {
-              escaladosByConversation.set(conversationId, e);
-            }
-          });
+        escalados.forEach((e: any) => {
+          const conversationId = String(e?.id_conversa_chatwoot || '');
+          if (!conversationId) return;
+
+          // Só ignora escalação se o encerramento for POSTERIOR à última escalação.
+          // Encerramentos antigos (mesmo CPF/conversa reaberta) NÃO podem apagar o resumo novo.
+          const enc = encerradosByConversation.get(conversationId);
+          if (enc) {
+            const escTs = new Date(e.updated_at || e.created_at || 0).getTime();
+            const encTs = new Date(enc.encerrado_em || enc.created_at || 0).getTime();
+            if (encTs >= escTs) return;
+          }
+
+          if (!escaladosByConversation.has(conversationId)) {
+            escaladosByConversation.set(conversationId, e);
+          }
+        });
 
         const filteredConversations = conversations.filter(conv => {
           const lastMsg = conv.messages?.[0] || conv.last_non_activity_message || null;
@@ -455,53 +597,69 @@ export function useChats() {
 
         const missingEscalatedConversations = Array.from(escaladosByConversation.values())
           .filter((esc: any) => !existingConversationIds.has(String(esc.id_conversa_chatwoot)))
-          .map((esc: any) => ({
-            id: Number(esc.id_conversa_chatwoot),
-            status: 'open',
-            contact: {
-              name: esc.nome || '',
-              phone_number: esc.telefone || ''
-            },
-            labels: ['precisa_atendimento'].concat(isWeekendSaoPaulo(esc.created_at) ? ['fim_semana_intervencao'] : []),
-            unread_count: 0,
-            created_at: esc.created_at,
-            updated_at: esc.created_at,
-            last_activity_at: esc.created_at,
-            messages: [{
-              content: esc.mini_resumo || 'Intervenção humana solicitada',
-              message_type: 2,
-              created_at: Math.floor(new Date(esc.created_at).getTime() / 1000)
-            }]
-          }));
+          // Só materializa escalações das últimas 24h (evita fantasmas de dias atrás)
+          .filter((esc: any) => {
+            const t = new Date(esc.updated_at || esc.created_at || 0).getTime();
+            return Number.isFinite(t) && Date.now() - t < 24 * 60 * 60 * 1000;
+          })
+          .map((esc: any) => {
+            const activityAt = esc.updated_at || esc.created_at;
+            return {
+              id: Number(esc.id_conversa_chatwoot),
+              status: 'open',
+              contact: {
+                name: esc.nome || '',
+                phone_number: esc.telefone || ''
+              },
+              labels: ['precisa_atendimento'].concat(isWeekendSaoPaulo(activityAt) ? ['fim_semana_intervencao'] : []),
+              unread_count: 0,
+              created_at: activityAt,
+              updated_at: activityAt,
+              last_activity_at: activityAt,
+              _fromEscalationOnly: true,
+              messages: [{
+                content: esc.mini_resumo || 'Intervenção humana solicitada',
+                message_type: 2,
+                created_at: Math.floor(new Date(activityAt).getTime() / 1000)
+              }]
+            };
+          });
 
         const conversationsToMap = filteredConversations.concat(missingEscalatedConversations);
 
         const mapeados = conversationsToMap.map(conv => {
-          const mappedChat = mapChatwootToChat(conv);
+          const mappedChat = mapChatwootToChat(conv) as StickyChat;
+          const fromEscalationOnly = Boolean((conv as any)._fromEscalationOnly);
+          mappedChat._fromEscalationOnly = fromEscalationOnly;
+
           const assignedUser = mappedChat.assigneeId ? usersByChatwootId.get(String(mappedChat.assigneeId)) : null;
           const esc = escaladosByConversation.get(String(mappedChat.id));
           const hasHumanAssignee = Boolean(mappedChat.assigneeId);
 
-          if (esc && !hasHumanAssignee) {
-            const labelSet = new Set(mappedChat.labels || []);
-            labelSet.add('precisa_atendimento');
-            if (isWeekendSaoPaulo(esc.created_at)) labelSet.add('fim_semana_intervencao');
-            mappedChat.labels = Array.from(labelSet);
-            mappedChat.escalationSummary = esc.mini_resumo || mappedChat.escalationSummary;
-            if (mappedChat.lastMessage && mappedChat.lastMessage !== 'Intervenção humana solicitada') {
-              mappedChat.lastMessage = mappedChat.lastMessage;
-            } else if (esc.mini_resumo) {
-              mappedChat.lastMessage = `[Intervenção] ${esc.mini_resumo}`;
-            }
+          // Sempre anexa o resumo da escalação quando existir no Supabase
+          if (esc?.mini_resumo) {
+            mappedChat.escalationSummary = esc.mini_resumo;
           }
 
-          if (hasHumanAssignee) {
+          // Humano do sistema já assumiu → tira da fila de pendentes (mesmo com registro antigo de escalação)
+          if (assignedUser && hasHumanAssignee) {
             mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
               const normalized = label.toLowerCase();
               return normalized !== 'precisa_atendimento' &&
                 normalized !== 'fora_exp_intervencao' &&
                 normalized !== 'fim_semana_intervencao';
             });
+          } else if (esc) {
+            // Escalação ativa sem humano: mantém labels + resumo no campo dedicado.
+            // NÃO sobrescreve lastMessage/time — isso fazia o horário pular entre
+            // última mensagem do WhatsApp e created_at do resumo de intervenção.
+            const labelSet = new Set(mappedChat.labels || []);
+            labelSet.add('precisa_atendimento');
+            if (isWeekendSaoPaulo(esc.updated_at || esc.created_at)) labelSet.add('fim_semana_intervencao');
+            mappedChat.labels = Array.from(labelSet);
+            if (esc.mini_resumo) {
+              mappedChat.escalationSummary = esc.mini_resumo;
+            }
           }
 
           if (assignedUser) {
@@ -516,19 +674,15 @@ export function useChats() {
                 mappedChat.lastMessage = `[Resumo IA] ${enc.mini_resumo}`;
               }
             }
-            if (enc && hasHumanAssignee) {
-              mappedChat.labels = (mappedChat.labels || []).filter((label: string) => {
-                const normalized = label.toLowerCase();
-                return normalized !== 'precisa_atendimento' &&
-                  normalized !== 'fora_exp_intervencao' &&
-                  normalized !== 'fim_semana_intervencao';
-              });
-            }
           }
 
           const monitor = monitorMap.get(mappedChat.id);
           if (monitor) {
-            if (mappedChat.lastMessageSender === 'user') {
+            // Monitor stale (>6h) gera alerta fantasma e faz a lista piscar no topo
+            const checkedAt = monitor.last_checked_at ? new Date(monitor.last_checked_at).getTime() : 0;
+            const monitorIsFresh = checkedAt > 0 && (Date.now() - checkedAt) < 6 * 60 * 60 * 1000;
+
+            if (mappedChat.lastMessageSender === 'user' && monitorIsFresh) {
               mappedChat.waitingSince = monitor.waiting_since || undefined;
               mappedChat.waitingMinutes = monitor.waiting_minutes || 0;
               mappedChat.statusAlerta = monitor.status_alerta || 'normal';
@@ -548,14 +702,16 @@ export function useChats() {
            console.warn('⚠️ Mapeamento resultou em 0 chats, mas havia conversas brutas.');
         }
 
-        return mapeados;
+        const previous = queryClient.getQueryData<StickyChat[]>(['chats']);
+        return mergeStickyInterventions(previous, mapeados);
       } catch (err) {
         console.error('🚨 ERRO no queryFn do useChats:', err);
         throw err;
       }
     },
-    refetchInterval: 6000,
-    staleTime: 4000,
+    // Polling mais calmo: evita a lista "trocar de clientes" a cada poucos segundos
+    refetchInterval: 15000,
+    staleTime: 12000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     placeholderData: (prev: any) => prev,
@@ -569,6 +725,8 @@ interface UseMessagesResult {
 }
 
 export function useMessages(chatId: string | null) {
+  const queryClient = useQueryClient();
+
   return useQuery<UseMessagesResult, Error, UseMessagesResult, ['messages', string | null]>({
     queryKey: ['messages', chatId],
     queryFn: async ({ queryKey }) => {
@@ -627,28 +785,32 @@ export function useMessages(chatId: string | null) {
         if (msg.message_type !== 2 || msg.private) continue;
         const content = (msg.content || '').toLowerCase();
 
-        // Marca início da intervenção humana
+        // Início real de intervenção: IA pausada (agente-off) ou humano assumiu com precisa_atendimento
         if (content.includes('adicionou agente-off') || content.includes('adicionou precisa_atendimento')) {
           if (!currentIntervention) {
             currentIntervention = { start: msg.created_at, operatorName: '' };
           }
         }
 
-        // Captura o nome do operador atribuído
+        // Nome do operador só dentro de uma intervenção já aberta (não abre período só por atribuição antiga)
         if (msg.content && /atribuído a/i.test(msg.content)) {
           const matchBy = msg.content.match(/atribuído a (.+?) por/i);
           const matchSimple = msg.content.match(/atribuído a (.+)/i);
           const operatorName = (matchBy?.[1] || matchSimple?.[1] || '').trim();
           if (operatorName && currentIntervention) {
             currentIntervention.operatorName = operatorName;
-          } else if (operatorName && !currentIntervention) {
-            // Atribuição pode vir antes do agente-off em alguns fluxos
-            currentIntervention = { start: msg.created_at, operatorName };
           }
         }
 
-        // Marca fim da intervenção humana (bot reativado)
-        if (content.includes('removeu agente-off') || content.includes('inteligente reativado')) {
+        // Fim da intervenção: IA reativada, desatribuído ou atendimento encerrado
+        if (
+          content.includes('removeu agente-off') ||
+          content.includes('inteligente reativado') ||
+          content.includes('desatribu') ||
+          content.includes('atendimento finalizado') ||
+          content.includes('conversa resolvida') ||
+          content.includes('reabriu a conversa')
+        ) {
           if (currentIntervention) {
             interventionPeriods.push({ ...currentIntervention, end: msg.created_at });
             currentIntervention = null;
@@ -697,11 +859,21 @@ export function useMessages(chatId: string | null) {
         }
       }
 
+      // Conversa atual sem assignee + sem agente-off = IA ativa (não herdar nome do último humano)
+      const chatsCache = queryClient.getQueryData<any[]>(['chats']);
+      const currentChat = Array.isArray(chatsCache)
+        ? chatsCache.find((c) => String(c.id) === String(chatId))
+        : null;
+      const currentAssigneeId = currentChat?.assigneeId != null ? String(currentChat.assigneeId) : '';
+      const labelsNow = (currentChat?.labels || []).map((l: string) => String(l).toLowerCase());
+      const iaAtivaAgora = !currentAssigneeId && !labelsNow.includes('agente-off');
+
       const messages = sortedRaw.map((msg: any) => {
         const mapped = mapChatwootToMessage(msg);
 
         if (msg.message_type === 1 && msg.sender?.id) {
           const sid = String(msg.sender.id);
+          const operatorInPeriod = getInterventionOperator(msg.created_at);
 
           // 1. content_attributes.sender_name (mensagens enviadas pelo nosso painel com nome explícito)
           if (msg.content_attributes?.sender_name) {
@@ -711,25 +883,37 @@ export function useMessages(chatId: string | null) {
           else if (msg.private) {
             mapped.senderName = humanNameById.get(sid) || msg.sender.name;
           }
-          // 3. sender.id NÃO é o admin → foi enviado direto do Chatwoot por um operador real
-          else if (sid !== ADMIN_SENDER_ID && humanChatwootIds.has(sid)) {
+          // 3. Dentro de intervenção humana documentada na timeline
+          else if (operatorInPeriod) {
+            mapped.senderName = operatorInPeriod;
+          }
+          // 4. Operador humano real enviando enquanto ainda é o assignee atual
+          else if (
+            sid !== ADMIN_SENDER_ID &&
+            humanChatwootIds.has(sid) &&
+            currentAssigneeId &&
+            sid === currentAssigneeId
+          ) {
             mapped.senderName = humanNameById.get(sid) || msg.sender.name;
           }
-          // 4. sender.id É o admin → verificar timeline de intervenção
-          else if (sid === ADMIN_SENDER_ID) {
-            const operator = getInterventionOperator(msg.created_at);
-            if (operator) {
-              // Está dentro de um período de intervenção humana → usar nome do operador
-              mapped.senderName = operator;
-            } else {
-              // Fora de intervenção → é o bot/IA, sem nome
-              mapped.senderName = undefined;
-            }
-          }
-          // 5. Fallback: sem nome (bot)
+          // 5. Fora de intervenção / IA ativa: NÃO herdar nome do último atendente do Chatwoot
           else {
             mapped.senderName = undefined;
           }
+
+          // Cinto de segurança: se a conversa está com IA ativa agora e a msg é recente pós-reabertura,
+          // nunca mostrar nome humano sem content_attributes explícito
+          if (
+            iaAtivaAgora &&
+            !msg.private &&
+            !msg.content_attributes?.sender_name &&
+            !operatorInPeriod
+          ) {
+            mapped.senderName = undefined;
+          }
+        } else if (msg.message_type === 1) {
+          // Outgoing sem sender.id → IA
+          mapped.senderName = undefined;
         }
         return mapped;
       });
