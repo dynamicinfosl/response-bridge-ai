@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { chatwootAPI, type ChatwootConversation, type ChatwootMessage } from '../lib/chatwoot';
 import type { Chat, Message, SendMessagePayload } from '../lib/api';
@@ -742,208 +743,263 @@ interface UseMessagesResult {
   transferInfo?: { fromName: string; toName: string; timestamp: string };
 }
 
+interface MessagesQueryData {
+  recentRaw: ChatwootMessage[];
+  hasMore: boolean;
+  oldestId: number | null;
+  usersResp: any[];
+}
+
+function mergeRawMessages(...groups: ChatwootMessage[][]): ChatwootMessage[] {
+  const map = new Map<string, ChatwootMessage>();
+  for (const group of groups) {
+    for (const msg of group) {
+      if (msg && msg.id != null) {
+        map.set(String(msg.id), msg);
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.created_at - b.created_at);
+}
+
+function processRawMessages(
+  rawMessages: ChatwootMessage[],
+  usersResp: any[],
+  queryClient: ReturnType<typeof useQueryClient>,
+  chatId: string | null
+): UseMessagesResult {
+  if (!Array.isArray(rawMessages)) {
+    return { messages: [], transferInfo: undefined };
+  }
+
+  const humanChatwootIds = new Set<string>(
+    (usersResp || []).filter((u: any) => u?.chatwoot_id).map((u: any) => String(u.chatwoot_id))
+  );
+  const humanNameById = new Map<string, string>(
+    (usersResp || []).filter((u: any) => u?.chatwoot_id && u?.full_name).map((u: any) => [String(u.chatwoot_id), u.full_name])
+  );
+
+  const ADMIN_SENDER_ID = '1';
+  const sortedRaw = mergeRawMessages(rawMessages);
+
+  type InterventionPeriod = { start: number; end: number; operatorName: string };
+  const interventionPeriods: InterventionPeriod[] = [];
+  let currentIntervention: { start: number; operatorName: string } | null = null;
+
+  for (const msg of sortedRaw) {
+    if (msg.message_type !== 2 || msg.private) continue;
+    const content = (msg.content || '').toLowerCase();
+
+    if (content.includes('adicionou agente-off') || content.includes('adicionou precisa_atendimento')) {
+      if (!currentIntervention) {
+        currentIntervention = { start: msg.created_at, operatorName: '' };
+      }
+    }
+
+    if (msg.content && /atribuído a/i.test(msg.content)) {
+      const matchBy = msg.content.match(/atribuído a (.+?) por/i);
+      const matchSimple = msg.content.match(/atribuído a (.+)/i);
+      const operatorName = (matchBy?.[1] || matchSimple?.[1] || '').trim();
+      if (operatorName && currentIntervention) {
+        currentIntervention.operatorName = operatorName;
+      }
+    }
+
+    if (
+      content.includes('removeu agente-off') ||
+      content.includes('inteligente reativado') ||
+      content.includes('desatribu') ||
+      content.includes('atendimento finalizado') ||
+      content.includes('conversa resolvida') ||
+      content.includes('reabriu a conversa')
+    ) {
+      if (currentIntervention) {
+        interventionPeriods.push({ ...currentIntervention, end: msg.created_at });
+        currentIntervention = null;
+      }
+    }
+  }
+  if (currentIntervention) {
+    interventionPeriods.push({ ...currentIntervention, end: Infinity });
+  }
+
+  const getInterventionOperator = (timestamp: number): string | undefined => {
+    for (const period of interventionPeriods) {
+      if (timestamp >= period.start && timestamp <= period.end && period.operatorName) {
+        return period.operatorName;
+      }
+    }
+    return undefined;
+  };
+
+  let lastTransferInfo: { fromName: string; toName: string; timestamp: string } | undefined = undefined;
+  for (let i = sortedRaw.length - 1; i >= 0; i--) {
+    const msg = sortedRaw[i];
+    if (msg.message_type !== 2 || msg.private) continue;
+    const content = msg.content || '';
+    if (/atribuído a|atribuiu|transferiu/i.test(content)) {
+      const matchBy = content.match(/atribuído a (.+?) por (.+)/i);
+      const matchSimple = content.match(/atribuído a (.+)/i);
+      const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
+      const matchTransferiu = content.match(/(.*) transferiu a conversa para (.*)/i);
+      const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || matchTransferiu?.[2] || '').trim();
+      let fromName = (matchBy?.[2] || matchAtribuiu?.[1] || matchTransferiu?.[1] || '').trim();
+      if (fromName.toLowerCase().includes('gabriel souza')) {
+        fromName = '';
+      }
+      if (toName) {
+        lastTransferInfo = {
+          fromName,
+          toName,
+          timestamp: new Date(msg.created_at * 1000).toISOString(),
+        };
+        break;
+      }
+    }
+  }
+
+  const chatsCache = queryClient.getQueryData<any[]>(['chats']);
+  const currentChat = Array.isArray(chatsCache)
+    ? chatsCache.find((c) => String(c.id) === String(chatId))
+    : null;
+  const currentAssigneeId = currentChat?.assigneeId != null ? String(currentChat.assigneeId) : '';
+  const labelsNow = (currentChat?.labels || []).map((l: string) => String(l).toLowerCase());
+  const iaAtivaAgora = !currentAssigneeId && !labelsNow.includes('agente-off');
+
+  const messages = sortedRaw.map((msg: any) => {
+    const mapped = mapChatwootToMessage(msg);
+
+    if (msg.message_type === 1 && msg.sender?.id) {
+      const sid = String(msg.sender.id);
+      const operatorInPeriod = getInterventionOperator(msg.created_at);
+
+      if (msg.content_attributes?.sender_name) {
+        mapped.senderName = msg.content_attributes.sender_name;
+      } else if (msg.private) {
+        mapped.senderName = humanNameById.get(sid) || msg.sender.name;
+      } else if (operatorInPeriod) {
+        mapped.senderName = operatorInPeriod;
+      } else if (
+        sid !== ADMIN_SENDER_ID &&
+        humanChatwootIds.has(sid) &&
+        currentAssigneeId &&
+        sid === currentAssigneeId
+      ) {
+        mapped.senderName = humanNameById.get(sid) || msg.sender.name;
+      } else {
+        mapped.senderName = undefined;
+      }
+
+      if (
+        iaAtivaAgora &&
+        !msg.private &&
+        !msg.content_attributes?.sender_name &&
+        !operatorInPeriod
+      ) {
+        mapped.senderName = undefined;
+      }
+    } else if (msg.message_type === 1) {
+      mapped.senderName = undefined;
+    }
+    return mapped;
+  });
+
+  return {
+    messages,
+    transferInfo: lastTransferInfo,
+  };
+}
+
 export function useMessages(chatId: string | null) {
   const queryClient = useQueryClient();
+  const [olderRaw, setOlderRaw] = useState<ChatwootMessage[]>([]);
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
 
-  return useQuery<UseMessagesResult, Error, UseMessagesResult, ['messages', string | null]>({
+  useEffect(() => {
+    setOlderRaw([]);
+    setHasMoreOlder(true);
+    loadingOlderRef.current = false;
+  }, [chatId]);
+
+  const query = useQuery<MessagesQueryData, Error, MessagesQueryData, ['messages', string | null]>({
     queryKey: ['messages', chatId],
     queryFn: async ({ queryKey }) => {
       const [, id] = queryKey;
-      if (!id) return { messages: [], transferInfo: undefined };
+      if (!id) {
+        return { recentRaw: [], hasMore: false, oldestId: null, usersResp: [] };
+      }
 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
       const [response, usersResp] = await Promise.all([
-        chatwootAPI.getMessages(Number(chatId)),
+        chatwootAPI.getMessages(Number(id)),
         getCachedUsers(supabaseUrl, anonKey),
       ]);
 
-      // Set de chatwoot_ids de humanos para diferenciar do bot
-      const humanChatwootIds = new Set<string>(
-        (usersResp || []).filter((u: any) => u?.chatwoot_id).map((u: any) => String(u.chatwoot_id))
-      );
-      // Mapa chatwoot_id -> full_name (nome real do Supabase)
-      const humanNameById = new Map<string, string>(
-        (usersResp || []).filter((u: any) => u?.chatwoot_id && u?.full_name).map((u: any) => [String(u.chatwoot_id), u.full_name])
-      );
-
-      // Chatwoot retorna { payload: [...] } ou { data: { payload: [...] } } via proxy
-      const rawMessages = (response as any).data?.payload || (response as any).payload || (Array.isArray(response) ? response : []);
-
-      if (!Array.isArray(rawMessages)) {
-        console.error('Chatwoot messages is not an array:', response);
-        return { messages: [], transferInfo: undefined };
-      }
-
-      // ID do admin cujo token de API é usado para TODAS as mensagens (bot + humanos)
-      const ADMIN_SENDER_ID = '1';
-
-      // Deduplica mensagens por ID único antes de ordenar
-      const uniqueRawMap = new Map<string, any>();
-      for (const msg of rawMessages) {
-        if (msg && msg.id != null) {
-          uniqueRawMap.set(String(msg.id), msg);
-        }
-      }
-      const uniqueRaw = Array.from(uniqueRawMap.values());
-
-      // Ordena cronologicamente para construir a timeline
-      const sortedRaw = uniqueRaw.sort((a: any, b: any) => a.created_at - b.created_at);
-
-      // ===== TIMELINE: detectar períodos de intervenção humana =====
-      // Quando "agente-off" é adicionado, o bot para e um humano assume.
-      // Quando "agente-off" é removido, o bot volta.
-      // A atividade "Atribuído a X por Y" nos dá o NOME do operador humano.
-      type InterventionPeriod = { start: number; end: number; operatorName: string };
-      const interventionPeriods: InterventionPeriod[] = [];
-      let currentIntervention: { start: number; operatorName: string } | null = null;
-
-      for (const msg of sortedRaw) {
-        if (msg.message_type !== 2 || msg.private) continue;
-        const content = (msg.content || '').toLowerCase();
-
-        // Início real de intervenção: IA pausada (agente-off) ou humano assumiu com precisa_atendimento
-        if (content.includes('adicionou agente-off') || content.includes('adicionou precisa_atendimento')) {
-          if (!currentIntervention) {
-            currentIntervention = { start: msg.created_at, operatorName: '' };
-          }
-        }
-
-        // Nome do operador só dentro de uma intervenção já aberta (não abre período só por atribuição antiga)
-        if (msg.content && /atribuído a/i.test(msg.content)) {
-          const matchBy = msg.content.match(/atribuído a (.+?) por/i);
-          const matchSimple = msg.content.match(/atribuído a (.+)/i);
-          const operatorName = (matchBy?.[1] || matchSimple?.[1] || '').trim();
-          if (operatorName && currentIntervention) {
-            currentIntervention.operatorName = operatorName;
-          }
-        }
-
-        // Fim da intervenção: IA reativada, desatribuído ou atendimento encerrado
-        if (
-          content.includes('removeu agente-off') ||
-          content.includes('inteligente reativado') ||
-          content.includes('desatribu') ||
-          content.includes('atendimento finalizado') ||
-          content.includes('conversa resolvida') ||
-          content.includes('reabriu a conversa')
-        ) {
-          if (currentIntervention) {
-            interventionPeriods.push({ ...currentIntervention, end: msg.created_at });
-            currentIntervention = null;
-          }
-        }
-      }
-      // Se ainda em intervenção, estende até o infinito
-      if (currentIntervention) {
-        interventionPeriods.push({ ...currentIntervention, end: Infinity });
-      }
-
-      // Função auxiliar: verifica se um timestamp está dentro de um período de intervenção
-      const getInterventionOperator = (timestamp: number): string | undefined => {
-        for (const period of interventionPeriods) {
-          if (timestamp >= period.start && timestamp <= period.end && period.operatorName) {
-            return period.operatorName;
-          }
-        }
-        return undefined;
-      };
-
-      // Detectar a informação de transferência mais recente (atribuição de operador)
-      let lastTransferInfo: { fromName: string; toName: string; timestamp: string } | undefined = undefined;
-      for (let i = sortedRaw.length - 1; i >= 0; i--) {
-        const msg = sortedRaw[i];
-        if (msg.message_type !== 2 || msg.private) continue;
-        const content = msg.content || '';
-        if (/atribuído a|atribuiu|transferiu/i.test(content)) {
-          const matchBy = content.match(/atribuído a (.+?) por (.+)/i);
-          const matchSimple = content.match(/atribuído a (.+)/i);
-          const matchAtribuiu = content.match(/(.*) atribuiu a conversa a (.*)/i);
-          const matchTransferiu = content.match(/(.*) transferiu a conversa para (.*)/i);
-          const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || matchTransferiu?.[2] || '').trim();
-          let fromName = (matchBy?.[2] || matchAtribuiu?.[1] || matchTransferiu?.[1] || '').trim();
-          if (fromName.toLowerCase().includes('gabriel souza')) {
-            fromName = '';
-          }
-          if (toName) {
-            lastTransferInfo = {
-              fromName,
-              toName,
-              timestamp: new Date(msg.created_at * 1000).toISOString(),
-            };
-            break;
-          }
-        }
-      }
-
-      // Conversa atual sem assignee + sem agente-off = IA ativa (não herdar nome do último humano)
-      const chatsCache = queryClient.getQueryData<any[]>(['chats']);
-      const currentChat = Array.isArray(chatsCache)
-        ? chatsCache.find((c) => String(c.id) === String(chatId))
-        : null;
-      const currentAssigneeId = currentChat?.assigneeId != null ? String(currentChat.assigneeId) : '';
-      const labelsNow = (currentChat?.labels || []).map((l: string) => String(l).toLowerCase());
-      const iaAtivaAgora = !currentAssigneeId && !labelsNow.includes('agente-off');
-
-      const messages = sortedRaw.map((msg: any) => {
-        const mapped = mapChatwootToMessage(msg);
-
-        if (msg.message_type === 1 && msg.sender?.id) {
-          const sid = String(msg.sender.id);
-          const operatorInPeriod = getInterventionOperator(msg.created_at);
-
-          // 1. content_attributes.sender_name (mensagens enviadas pelo nosso painel com nome explícito)
-          if (msg.content_attributes?.sender_name) {
-            mapped.senderName = msg.content_attributes.sender_name;
-          }
-          // 2. Mensagens privadas (notas internas) usam o nome real do sender
-          else if (msg.private) {
-            mapped.senderName = humanNameById.get(sid) || msg.sender.name;
-          }
-          // 3. Dentro de intervenção humana documentada na timeline
-          else if (operatorInPeriod) {
-            mapped.senderName = operatorInPeriod;
-          }
-          // 4. Operador humano real enviando enquanto ainda é o assignee atual
-          else if (
-            sid !== ADMIN_SENDER_ID &&
-            humanChatwootIds.has(sid) &&
-            currentAssigneeId &&
-            sid === currentAssigneeId
-          ) {
-            mapped.senderName = humanNameById.get(sid) || msg.sender.name;
-          }
-          // 5. Fora de intervenção / IA ativa: NÃO herdar nome do último atendente do Chatwoot
-          else {
-            mapped.senderName = undefined;
-          }
-
-          // Cinto de segurança: se a conversa está com IA ativa agora e a msg é recente pós-reabertura,
-          // nunca mostrar nome humano sem content_attributes explícito
-          if (
-            iaAtivaAgora &&
-            !msg.private &&
-            !msg.content_attributes?.sender_name &&
-            !operatorInPeriod
-          ) {
-            mapped.senderName = undefined;
-          }
-        } else if (msg.message_type === 1) {
-          // Outgoing sem sender.id → IA
-          mapped.senderName = undefined;
-        }
-        return mapped;
-      });
-
       return {
-        messages,
-        transferInfo: lastTransferInfo,
+        recentRaw: response.messages || [],
+        hasMore: Boolean(response.hasMore),
+        oldestId: response.oldestId,
+        usersResp: usersResp || [],
       };
     },
     enabled: !!chatId,
     refetchInterval: 3000,
   });
+
+  useEffect(() => {
+    if (query.data && olderRaw.length === 0) {
+      setHasMoreOlder(query.data.hasMore);
+    }
+  }, [query.data, olderRaw.length]);
+
+  const processed = useMemo(() => {
+    if (!query.data) return { messages: [] as Message[], transferInfo: undefined };
+    const merged = mergeRawMessages(olderRaw, query.data.recentRaw);
+    return processRawMessages(merged, query.data.usersResp, queryClient, chatId);
+  }, [query.data, olderRaw, queryClient, chatId]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!chatId || !hasMoreOlder || loadingOlderRef.current) return;
+
+    const recentRaw = query.data?.recentRaw || [];
+    const merged = mergeRawMessages(olderRaw, recentRaw);
+    if (merged.length === 0) return;
+
+    const oldest = merged.reduce((a, b) => (a.created_at <= b.created_at ? a : b));
+    loadingOlderRef.current = true;
+    setIsLoadingOlder(true);
+
+    try {
+      const page = await chatwootAPI.getMessagesPage(Number(chatId), oldest.id);
+      const existingIds = new Set(merged.map((m) => Number(m.id)));
+      const newOnes = page.messages.filter((m) => m?.id != null && !existingIds.has(Number(m.id)));
+
+      if (newOnes.length === 0) {
+        setHasMoreOlder(false);
+        return;
+      }
+
+      setOlderRaw((prev) => mergeRawMessages(newOnes, prev));
+      setHasMoreOlder(page.hasMore);
+    } catch (err) {
+      console.error('Erro ao carregar mensagens antigas:', err);
+    } finally {
+      loadingOlderRef.current = false;
+      setIsLoadingOlder(false);
+    }
+  }, [chatId, hasMoreOlder, olderRaw, query.data?.recentRaw]);
+
+  return {
+    ...query,
+    data: processed,
+    loadOlderMessages,
+    isLoadingOlder,
+    hasMoreOlder,
+  };
 }
 
 export function useSendMessage() {

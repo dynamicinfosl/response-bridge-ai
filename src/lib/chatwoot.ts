@@ -169,31 +169,66 @@ export const chatwootAPI = {
       body: JSON.stringify({ status }),
     }),
 
+  /** Uma página de mensagens. `before` = ID da mensagem mais antiga já carregada. */
+  getMessagesPage: async (conversationId: number, beforeId?: string | number | null) => {
+    const PAGE_SIZE = 20;
+    const url = `/conversations/${conversationId}/messages?t=${Date.now()}${beforeId != null && beforeId !== '' ? `&before=${beforeId}` : ''}`;
+    const response = await chatwootFetch<any>(url);
+    const raw: ChatwootMessage[] = response.data?.payload || response.payload || (Array.isArray(response) ? response : []);
+    const messages: ChatwootMessage[] = [];
+    const seenIds = new Set<number>();
+
+    if (Array.isArray(raw)) {
+      for (const msg of raw) {
+        if (msg && msg.id != null && !seenIds.has(Number(msg.id))) {
+          seenIds.add(Number(msg.id));
+          messages.push(msg);
+        }
+      }
+    }
+
+    const oldest = messages.length
+      ? messages.reduce((a, b) => (a.created_at <= b.created_at ? a : b))
+      : null;
+
+    return {
+      messages,
+      oldestId: oldest?.id ?? null,
+      hasMore: messages.length >= PAGE_SIZE,
+    };
+  },
+
+  /** Janela recente (1–2 páginas). Histórico antigo via getMessagesPage + before. */
   getMessages: async (conversationId: number) => {
+    const INITIAL_PAGES = 2;
     let allMessages: ChatwootMessage[] = [];
     const seenIds = new Set<number>();
-    let beforeId: string | number = '';
-    
-    for (let i = 0; i < 5; i++) { // Busca até 5 páginas (100 mensagens)
-      const url = `/conversations/${conversationId}/messages?t=${Date.now()}${beforeId ? `&before=${beforeId}` : ''}`;
-      const response = await chatwootFetch<any>(url);
-      const messages: ChatwootMessage[] = response.data?.payload || response.payload || (Array.isArray(response) ? response : []);
-      
-      if (!Array.isArray(messages) || messages.length === 0) break;
-      
-      for (const msg of messages) {
+    let beforeId: string | number | null = null;
+    let hasMore = false;
+    let oldestId: number | null = null;
+
+    for (let i = 0; i < INITIAL_PAGES; i++) {
+      const page = await chatwootAPI.getMessagesPage(conversationId, beforeId);
+
+      for (const msg of page.messages) {
         if (msg && msg.id != null && !seenIds.has(Number(msg.id))) {
           seenIds.add(Number(msg.id));
           allMessages.push(msg);
         }
       }
-      
-      if (messages.length < 20) break;
-      
-      beforeId = messages[0].id;
+
+      hasMore = page.hasMore;
+      oldestId = page.oldestId;
+      if (!page.hasMore || page.oldestId == null) break;
+      beforeId = page.oldestId;
     }
-    
-    return allMessages;
+
+    if (allMessages.length > 0) {
+      const oldest = allMessages.reduce((a, b) => (a.created_at <= b.created_at ? a : b));
+      oldestId = oldest.id;
+    }
+
+    return { messages: allMessages, hasMore, oldestId };
   },
 
   markAsRead: (conversationId: number) =>

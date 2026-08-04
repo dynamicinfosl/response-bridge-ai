@@ -243,6 +243,8 @@ const Atendimentos = () => {
   const lastMessageCountRef = useRef<number>(0);
   const lastMessageSignatureRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingScrollRestoreRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
 
   // Controle local de contagem de não lidas para maior confiabilidade
   const [localUnread, setLocalUnread] = useState<Record<string, number>>({});
@@ -267,7 +269,13 @@ const Atendimentos = () => {
 
   const { data: chatsData, isLoading: chatsLoading, isFetching: chatsFetching, error: chatsError } = useChats();
   const { data: searchResults, isLoading: searchLoading } = useChatSearch(searchQuery);
-  const { data: messagesData, isLoading: messagesLoading } = useMessages(selectedChat);
+  const {
+    data: messagesData,
+    isLoading: messagesLoading,
+    loadOlderMessages,
+    isLoadingOlder,
+    hasMoreOlder,
+  } = useMessages(selectedChat);
   const sendMessageMutation = useSendMessage();
   const sendAttachmentMutation = useSendAttachment();
   const saveClientIdentityMutation = useSaveClientIdentity();
@@ -1231,7 +1239,34 @@ const Atendimentos = () => {
       setShowScrollButton(false);
       setNewMessageCount(0);
     }
+
+    // Carregar histórico antigo ao chegar perto do topo
+    if (container.scrollTop < 80 && hasMoreOlder && !isLoadingOlder) {
+      pendingScrollRestoreRef.current = true;
+      prevScrollHeightRef.current = container.scrollHeight;
+      void loadOlderMessages();
+    }
   };
+
+  // Preservar posição do scroll após prepend de mensagens antigas
+  useEffect(() => {
+    if (!pendingScrollRestoreRef.current || !messagesContainerRef.current) return;
+    if (isLoadingOlder) return;
+
+    const container = messagesContainerRef.current;
+    const diff = container.scrollHeight - prevScrollHeightRef.current;
+    if (diff > 0) {
+      container.scrollTop = container.scrollTop + diff;
+    }
+    pendingScrollRestoreRef.current = false;
+
+    // Se ainda está no topo, carrega a próxima página automaticamente
+    if (container.scrollTop < 80 && hasMoreOlder) {
+      pendingScrollRestoreRef.current = true;
+      prevScrollHeightRef.current = container.scrollHeight;
+      void loadOlderMessages();
+    }
+  }, [messages.length, isLoadingOlder, hasMoreOlder, loadOlderMessages]);
 
   // Assinatura da última mensagem: funciona mesmo quando o backend mantém o mesmo tamanho de lista
   const lastMessageSignature = messages.length > 0
@@ -2685,6 +2720,18 @@ const Atendimentos = () => {
                         >
                           {newMessageCount} nova{newMessageCount > 1 ? 's' : ''} mensagem{newMessageCount > 1 ? 's' : ''}
                         </Button>
+                      </div>
+                    )}
+                    {(isLoadingOlder || (hasMoreOlder && messages.length > 0)) && (
+                      <div className="flex justify-center py-2">
+                        {isLoadingOlder ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Carregando mensagens antigas…
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground/70">Role para cima para carregar mais</span>
+                        )}
                       </div>
                     )}
                     {messages.length === 0 ? (
