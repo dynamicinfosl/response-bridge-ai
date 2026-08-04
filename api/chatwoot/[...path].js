@@ -41,20 +41,28 @@ export default async function handler(req, res) {
   let originalPath = '';
   if (req.query && Array.isArray(req.query.path)) {
     originalPath = '/' + req.query.path.join('/');
-    try {
-      const urlObj = new URL(req.url, 'http://localhost');
-      urlObj.searchParams.delete('path');
-      const queryString = urlObj.searchParams.toString();
-      if (queryString) {
-        originalPath += `?${queryString}`;
-      }
-    } catch (e) {
-      /* ignore */
-    }
   } else if (req.query && typeof req.query.path === 'string') {
     originalPath = '/' + req.query.path;
   } else {
-    originalPath = (req.url || '').replace(/^\/api\/chatwoot/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+    originalPath = (req.url || '').split('?')[0].replace(/^\/api\/chatwoot/, '').replace(/^\/\[\.\.\.path\]/, '') || '/';
+  }
+
+  // Query params via req.query (before, t, after…). No Vercel, req.url costuma vir sem search string —
+  // o mesmo bug que quebrava o proxy MK e fazia o load-older repetir a 1ª página.
+  const queryParams = new URLSearchParams();
+  if (req.query && typeof req.query === 'object') {
+    Object.entries(req.query).forEach(([k, v]) => {
+      if (k === 'path') return;
+      if (Array.isArray(v)) {
+        v.forEach((val) => queryParams.append(k, String(val)));
+      } else if (v != null) {
+        queryParams.append(k, String(v));
+      }
+    });
+  }
+  const queryString = queryParams.toString();
+  if (queryString) {
+    originalPath += `?${queryString}`;
   }
 
   const targetUrl = `${chatwootBase}${originalPath}`;

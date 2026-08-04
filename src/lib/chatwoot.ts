@@ -169,7 +169,10 @@ export const chatwootAPI = {
       body: JSON.stringify({ status }),
     }),
 
-  /** Uma página de mensagens. `before` = ID da mensagem mais antiga já carregada. */
+  /**
+   * Uma página de mensagens.
+   * Chatwoot usa `WHERE id < before` (MessageFinder#messages_before) — o cursor deve ser o menor ID.
+   */
   getMessagesPage: async (conversationId: number, beforeId?: string | number | null) => {
     const PAGE_SIZE = 20;
     const url = `/conversations/${conversationId}/messages?t=${Date.now()}${beforeId != null && beforeId !== '' ? `&before=${beforeId}` : ''}`;
@@ -187,13 +190,14 @@ export const chatwootAPI = {
       }
     }
 
-    const oldest = messages.length
-      ? messages.reduce((a, b) => (a.created_at <= b.created_at ? a : b))
+    // Cursor = menor ID (API filtra por id, não por created_at)
+    const oldestId = messages.length
+      ? messages.reduce((min, m) => (Number(m.id) < min ? Number(m.id) : min), Number(messages[0].id))
       : null;
 
     return {
       messages,
-      oldestId: oldest?.id ?? null,
+      oldestId,
       hasMore: messages.length >= PAGE_SIZE,
     };
   },
@@ -209,12 +213,20 @@ export const chatwootAPI = {
 
     for (let i = 0; i < INITIAL_PAGES; i++) {
       const page = await chatwootAPI.getMessagesPage(conversationId, beforeId);
+      let added = 0;
 
       for (const msg of page.messages) {
         if (msg && msg.id != null && !seenIds.has(Number(msg.id))) {
           seenIds.add(Number(msg.id));
           allMessages.push(msg);
+          added += 1;
         }
+      }
+
+      // Se a página não trouxe IDs novos (ex.: before ignorado pelo proxy), para
+      if (added === 0) {
+        hasMore = false;
+        break;
       }
 
       hasMore = page.hasMore;
@@ -224,8 +236,7 @@ export const chatwootAPI = {
     }
 
     if (allMessages.length > 0) {
-      const oldest = allMessages.reduce((a, b) => (a.created_at <= b.created_at ? a : b));
-      oldestId = oldest.id;
+      oldestId = allMessages.reduce((min, m) => (Number(m.id) < min ? Number(m.id) : min), Number(allMessages[0].id));
     }
 
     return { messages: allMessages, hasMore, oldestId };

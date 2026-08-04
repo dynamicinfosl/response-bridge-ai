@@ -969,12 +969,17 @@ export function useMessages(chatId: string | null) {
     const merged = mergeRawMessages(olderRaw, recentRaw);
     if (merged.length === 0) return;
 
-    const oldest = merged.reduce((a, b) => (a.created_at <= b.created_at ? a : b));
+    // Chatwoot: before = menor ID já carregado (WHERE id < before)
+    const beforeId = merged.reduce(
+      (min, m) => (Number(m.id) < min ? Number(m.id) : min),
+      Number(merged[0].id)
+    );
+
     loadingOlderRef.current = true;
     setIsLoadingOlder(true);
 
     try {
-      const page = await chatwootAPI.getMessagesPage(Number(chatId), oldest.id);
+      const page = await chatwootAPI.getMessagesPage(Number(chatId), beforeId);
       const existingIds = new Set(merged.map((m) => Number(m.id)));
       const newOnes = page.messages.filter((m) => m?.id != null && !existingIds.has(Number(m.id)));
 
@@ -987,6 +992,7 @@ export function useMessages(chatId: string | null) {
       setHasMoreOlder(page.hasMore);
     } catch (err) {
       console.error('Erro ao carregar mensagens antigas:', err);
+      // Não marca hasMore=false em erro de rede — permite nova tentativa
     } finally {
       loadingOlderRef.current = false;
       setIsLoadingOlder(false);
