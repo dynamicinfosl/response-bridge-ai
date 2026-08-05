@@ -438,14 +438,22 @@ export function useChats() {
 
         // ---------- Buscar conversas via Edge Function (rápido, com cache) ----------
         const edgeFunctionUrl = `${supabaseUrl}/functions/v1/chatwoot-sync`;
+        // 30s: o ciclo que varre todas as conversas abertas leva ~12s, e 15s
+        // deixava o painel estourar o timeout justamente nesse ciclo.
         const conversations = await fetchJsonWithTimeout(edgeFunctionUrl, {
           headers: { 'Content-Type': 'application/json' }
-        }, 15000).then((json: any) => {
+        }, 30000).then((json: any) => {
           const convs = json?.conversations;
           if (!Array.isArray(convs)) {
             console.error('❌ Edge Function retornou dados inválidos:', json);
             throw new Error('Edge Function returned invalid data');
           }
+
+          // A oscilação era do servidor: a edge function devolvia só o lote recém-buscado
+          // no ciclo 'fresh' (~75) e o cache inteiro no ciclo 'cache' (~283). Corrigido na
+          // v6 (05/08/2026) — a resposta agora sai sempre do cache completo.
+          // Não acumular a lista aqui: um mapa que só cresce faria conversa encerrada
+          // nunca sair da tela, que é pior do que o sintoma original.
           console.log(`✅ ${convs.length} conversas carregadas (source: ${json.source})`);
           return convs;
         });
@@ -605,41 +613,16 @@ export function useChats() {
             .map((m: any) => [String(m.conversation_id), m])
         );
 
-        const existingConversationIds = new Set(
-          filteredConversations.map((conv: any) => String(conv.id || conv.conversation_id || ''))
-        );
-
-        const missingEscalatedConversations = Array.from(escaladosByConversation.values())
-          .filter((esc: any) => !existingConversationIds.has(String(esc.id_conversa_chatwoot)))
-          // Só materializa escalações das últimas 24h (evita fantasmas de dias atrás)
-          .filter((esc: any) => {
-            const t = new Date(esc.updated_at || esc.created_at || 0).getTime();
-            return Number.isFinite(t) && Date.now() - t < 24 * 60 * 60 * 1000;
-          })
-          .map((esc: any) => {
-            const activityAt = esc.updated_at || esc.created_at;
-            return {
-              id: Number(esc.id_conversa_chatwoot),
-              status: 'open',
-              contact: {
-                name: esc.nome || '',
-                phone_number: esc.telefone || ''
-              },
-              labels: ['precisa_atendimento'].concat(isWeekendSaoPaulo(activityAt) ? ['fim_semana_intervencao'] : []),
-              unread_count: 0,
-              created_at: activityAt,
-              updated_at: activityAt,
-              last_activity_at: activityAt,
-              _fromEscalationOnly: true,
-              messages: [{
-                content: esc.mini_resumo || 'Intervenção humana solicitada',
-                message_type: 2,
-                created_at: Math.floor(new Date(activityAt).getTime() / 1000)
-              }]
-            };
-          });
-
-        const conversationsToMap = filteredConversations.concat(missingEscalatedConversations);
+        // Antes materializávamos aqui um "chat fantasma" para toda escalação das últimas
+        // 24h que não viesse na resposta, inventando `labels: ['precisa_atendimento']`.
+        // Isso partia do princípio de que "não está na resposta" = "ainda pendente", o que
+        // é falso: a conversa some da resposta justamente quando é encerrada. Em 05/08/2026
+        // as 65 conversas que apareciam como pendentes de humano em Triagem estavam TODAS
+        // resolvidas no Chatwoot — 100% de falso positivo, várias já atendidas por humano.
+        // A edge function (v7) agora devolve todas as conversas abertas, então ausência na
+        // resposta é prova de que não está aberta. O resumo da escalação continua sendo
+        // anexado abaixo, via `escaladosByConversation`, nas conversas que existem de fato.
+        const conversationsToMap = filteredConversations;
 
         const mapeados = conversationsToMap.map(conv => {
           const mappedChat = mapChatwootToChat(conv) as StickyChat;

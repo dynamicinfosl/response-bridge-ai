@@ -6,9 +6,18 @@ const CHATWOOT_ACCOUNT_ID = Deno.env.get('CHATWOOT_ACCOUNT_ID') || '1';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// TTL alinhado ao polling do painel (~15s). TTL baixo demais faz a lista oscilar a cada refresh.
-const CACHE_TTL_MS = 20_000;
-const MAX_PAGES = 3;
+// Varrer todas as abertas leva ~12s. Com TTL de 20s quase todo poll do painel caia
+// no caminho lento e encostava no timeout de 15s do frontend. Com 45s, so ~1 em cada
+// 3 polls dispara sync; os outros respondem do cache na hora.
+const CACHE_TTL_MS = 45_000;
+// O painel precisa de TODA conversa aberta, senao ele nao consegue distinguir
+// "nao esta no cache" de "ja foi encerrada" (05/08/2026: 65 conversas resolvidas
+// apareciam como pendentes de humano porque o frontend as materializava as cegas).
+// status=open e paginado ate esgotar; status=all cobre as resolvidas recentes.
+const MAX_PAGES_OPEN = 40;
+const MAX_PAGES_RECENT = 4;
+const PAGE_BATCH = 12;
+const PAGE_SIZE = 25;
 const FETCH_TIMEOUT_MS = 8_000;
 const LOCK_TIMEOUT_MS = 30_000;
 
@@ -20,12 +29,12 @@ const corsHeaders = {
 
 let memResponseCache: { ts: number; body: string } | null = null;
 
-async function fetchChatwootPage(page: number): Promise<any[] | null> {
+async function fetchChatwootPage(page: number, status = 'all'): Promise<any[] | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const url = `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations?status=all&page=${page}`;
+    const url = `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations?status=${status}&page=${page}`;
     const resp = await fetch(url, {
       headers: { 'api_access_token': CHATWOOT_TOKEN, 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -127,6 +136,22 @@ function mapConversation(conv: any) {
   };
 }
 
+// Fonte unica da resposta: o conjunto completo do cache, ordenado por atividade.
+// Usado nos tres caminhos (cache / fresh / erro) para que a contagem seja sempre
+// a mesma. Devolver so o lote recem-buscado fazia a lista oscilar entre ~75 e ~283
+// a cada ciclo, com conversas sumindo e reaparecendo na tela.
+// 500 cortava a lista: so de conversas abertas o Chatwoot tem ~577 (05/08/2026).
+const RESPONSE_LIMIT = 1500;
+
+async function lerCacheCompleto(supabase: any): Promise<any[]> {
+  const { data } = await supabase
+    .from('conversas_cache')
+    .select('raw_data')
+    .order('last_activity_at', { ascending: false })
+    .limit(RESPONSE_LIMIT);
+  return (data || []).map((row: any) => row.raw_data).filter(Boolean);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -148,7 +173,6 @@ Deno.serve(async (req: Request) => {
       .eq('id', 1)
       .single();
 
-    // Self-healing: create the control row if it was deleted
     if (!syncControl) {
       const { data: created } = await supabase
         .from('conversas_sync_control')
@@ -165,13 +189,7 @@ Deno.serve(async (req: Request) => {
     const isLocked = syncControl?.sync_in_progress && lockAge < LOCK_TIMEOUT_MS;
 
     if (isFresh || isLocked) {
-      const { data: cached } = await supabase
-        .from('conversas_cache')
-        .select('raw_data')
-        .order('last_activity_at', { ascending: false })
-        .limit(500);
-
-      const conversations = (cached || []).map((row: any) => row.raw_data);
+      const conversations = await lerCacheCompleto(supabase);
       const body = JSON.stringify({
         source: isFresh ? 'cache' : 'cache_locked',
         count: conversations.length,
@@ -191,32 +209,48 @@ Deno.serve(async (req: Request) => {
 
     const cutoff24h = Date.now() - (24 * 60 * 60 * 1000);
 
-    const pagePromises: Promise<any[] | null>[] = [];
-    for (let p = 1; p <= MAX_PAGES; p++) {
-      pagePromises.push(fetchChatwootPage(p));
-    }
-
-    const pageResults = await Promise.all(pagePromises);
-
     let allConversations: any[] = [];
     const seenIds = new Set<number>();
     let pageFailures = 0;
 
-    for (const pageData of pageResults) {
-      if (pageData === null) {
-        pageFailures += 1;
-        continue;
-      }
-      for (const conv of pageData) {
-        if (!seenIds.has(conv.id)) {
-          seenIds.add(conv.id);
-          allConversations.push(conv);
+    // Pagina em lotes e para assim que uma pagina vem incompleta (fim da lista),
+    // para nao disparar 40 requisicoes quando existem poucas conversas.
+    // devolve true se chegou ao fim da lista (e nao se esbarrou no teto de paginas)
+    const coletar = async (status: string, maxPaginas: number) => {
+      let fim = false;
+      for (let inicio = 1; inicio <= maxPaginas && !fim; inicio += PAGE_BATCH) {
+        const lote: Promise<any[] | null>[] = [];
+        for (let p = inicio; p < inicio + PAGE_BATCH && p <= maxPaginas; p++) {
+          lote.push(fetchChatwootPage(p, status));
+        }
+        const resultados = await Promise.all(lote);
+        for (const pageData of resultados) {
+          if (pageData === null) {
+            pageFailures += 1;
+            continue;
+          }
+          if (pageData.length < PAGE_SIZE) fim = true;
+          for (const conv of pageData) {
+            if (!seenIds.has(conv.id)) {
+              seenIds.add(conv.id);
+              allConversations.push(conv);
+            }
+          }
         }
       }
-    }
+      return fim;
+    };
+
+    // Abertas primeiro: sao as que o painel precisa ter por completo.
+    const abertasCompletas = await coletar('open', MAX_PAGES_OPEN);
+    const abertas = allConversations.length;
+    // Depois as recentes de qualquer status, para a visao de encerrados.
+    await coletar('all', MAX_PAGES_RECENT);
+
     const syncComplete = pageFailures === 0;
+    console.log(`Sync: ${abertas} abertas + ${allConversations.length - abertas} recentes`);
     if (!syncComplete) {
-      console.warn(`Sync parcial: ${pageFailures}/${MAX_PAGES} páginas falharam — prune será ignorado neste ciclo`);
+      console.warn(`Sync parcial: ${pageFailures} páginas falharam — prune será ignorado neste ciclo`);
     }
 
     allConversations = allConversations.filter(conv => {
@@ -238,13 +272,35 @@ Deno.serve(async (req: Request) => {
         if (error) console.error('Upsert error:', error.message);
       }
 
-      if (syncComplete) {
+      // Limpeza. Como a varredura de abertas vai ate o fim da lista, ausencia neste
+      // ciclo prova que a conversa nao esta mais aberta — inclusive quando o cache
+      // ainda a tem como 'open'. A versao anterior filtrava por status do cache, que
+      // e justamente o dado desatualizado: conversa encerrada fora do painel ficava
+      // presa como pendente para sempre (05/08/2026: 202 conversas, a mais velha de
+      // 11/05). So roda quando a varredura chegou ao fim — senao ausencia nao prova nada.
+      if (syncComplete && abertasCompletas) {
         const activeIds = mapped.map(c => c.conversation_id);
-        await supabase
+        const filtro = `(${activeIds.join(',')})`;
+
+        // Freio: uma paginacao que termine cedo por acaso (pagina curta no meio da
+        // lista) marcaria varredura completa e apagaria meio cache. Se a limpeza for
+        // grande demais, e sinal de sync ruim — melhor deixar dado velho do que sumir
+        // com a fila do time.
+        const { count: aRemover } = await supabase
           .from('conversas_cache')
-          .delete()
-          .not('status', 'in', '("open","pending")')
-          .not('conversation_id', 'in', `(${activeIds.join(',')})`);
+          .select('conversation_id', { count: 'exact', head: true })
+          .not('conversation_id', 'in', filtro);
+        const { count: totalCache } = await supabase
+          .from('conversas_cache')
+          .select('conversation_id', { count: 'exact', head: true });
+
+        const limite = Math.max(50, Math.floor((totalCache || 0) * 0.25));
+        if ((aRemover || 0) > limite) {
+          console.warn(`Limpeza ignorada: removeria ${aRemover} de ${totalCache} (limite ${limite})`);
+        } else if ((aRemover || 0) > 0) {
+          await supabase.from('conversas_cache').delete().not('conversation_id', 'in', filtro);
+          console.log(`Limpeza: ${aRemover} conversas removidas do cache`);
+        }
       }
     }
 
@@ -257,21 +313,7 @@ Deno.serve(async (req: Request) => {
       })
       .eq('id', 1);
 
-    let responseConversations: any[] = mapped.map(m => m.raw_data);
-    if (!syncComplete) {
-      try {
-        const { data: cached } = await supabase
-          .from('conversas_cache')
-          .select('raw_data')
-          .order('last_activity_at', { ascending: false })
-          .limit(500);
-        const seen = new Set(mapped.map((c: any) => c.conversation_id));
-        const extras = (cached || [])
-          .map((row: any) => row.raw_data)
-          .filter((c: any) => c && !seen.has(c.id));
-        responseConversations = [...responseConversations, ...extras];
-      } catch (_) { /* ignore */ }
-    }
+    const responseConversations = await lerCacheCompleto(supabase);
 
     const body = JSON.stringify({
       source: syncComplete ? 'fresh' : 'fresh_partial',
@@ -295,13 +337,7 @@ Deno.serve(async (req: Request) => {
     } catch (_) { /* ignore */ }
 
     try {
-      const { data: fallback } = await supabase
-        .from('conversas_cache')
-        .select('raw_data')
-        .order('last_activity_at', { ascending: false })
-        .limit(500);
-
-      const conversations = (fallback || []).map((row: any) => row.raw_data);
+      const conversations = await lerCacheCompleto(supabase);
       return new Response(JSON.stringify({
         source: 'cache_error_fallback',
         count: conversations.length,
