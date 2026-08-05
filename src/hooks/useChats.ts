@@ -298,17 +298,6 @@ const mapChatwootToMessage = (msg: ChatwootMessage): Message => {
   };
 };
 
-const isWeekendSaoPaulo = (dateValue: any) => {
-  if (!dateValue) return false;
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return false;
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Sao_Paulo',
-    weekday: 'short',
-  }).format(date);
-  return weekday === 'Sat' || weekday === 'Sun';
-};
-
 const getCanonicalSectorLabel = (area?: string | null) => {
   const normalized = (area || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   if (normalized === 'tecnica' || normalized === 'tecnico') return 'tecnico';
@@ -652,13 +641,14 @@ export function useChats() {
                 normalized !== 'fim_semana_intervencao';
             });
           } else if (esc) {
-            // Escalação ativa sem humano: mantém labels + resumo no campo dedicado.
+            // O registro em atendimentos_escalados prova que a conversa JÁ FOI escalada
+            // um dia — não que ela continue pendente. A tabela não tem marcador de
+            // resolvido (4.103 linhas em 05/08/2026), então o registro nunca sai, e
+            // forçar `precisa_atendimento` aqui ressuscitava conversa encerrada como
+            // pendente para sempre. Quem manda sobre pendência é a etiqueta no Chatwoot.
+            // O registro serve só para o resumo, que é contexto útil para o time.
             // NÃO sobrescreve lastMessage/time — isso fazia o horário pular entre
             // última mensagem do WhatsApp e created_at do resumo de intervenção.
-            const labelSet = new Set(mappedChat.labels || []);
-            labelSet.add('precisa_atendimento');
-            if (isWeekendSaoPaulo(esc.updated_at || esc.created_at)) labelSet.add('fim_semana_intervencao');
-            mappedChat.labels = Array.from(labelSet);
             if (esc.mini_resumo) {
               mappedChat.escalationSummary = esc.mini_resumo;
             }
