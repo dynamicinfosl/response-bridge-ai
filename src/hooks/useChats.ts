@@ -104,7 +104,7 @@ const translateSystemMessage = (content: string): string => {
     if (matchTransferiu) {
       const fromName = matchTransferiu[1].trim();
       const toName = matchTransferiu[2].trim();
-      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+      if (fromName.toLowerCase() === toName.toLowerCase()) {
         return `${toName} assumiu a conversa`;
       }
       return `${fromName} transferiu a conversa para ${toName}`;
@@ -115,7 +115,7 @@ const translateSystemMessage = (content: string): string => {
     if (matchBy) {
       const toName = matchBy[1].trim();
       const fromName = matchBy[2].trim();
-      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+      if (fromName.toLowerCase() === toName.toLowerCase()) {
         return `${toName} assumiu a conversa`;
       }
       return `${fromName} transferiu a conversa para ${toName}`;
@@ -126,7 +126,7 @@ const translateSystemMessage = (content: string): string => {
     if (matchAtribuiu) {
       const fromName = matchAtribuiu[1].trim();
       const toName = matchAtribuiu[2].trim();
-      if (fromName.toLowerCase().includes('gabriel souza') || fromName.toLowerCase() === toName.toLowerCase()) {
+      if (fromName.toLowerCase() === toName.toLowerCase()) {
         return `${toName} assumiu a conversa`;
       }
       return `${fromName} transferiu a conversa para ${toName}`;
@@ -817,7 +817,8 @@ function processRawMessages(
       const matchTransferiu = content.match(/(.*) transferiu a conversa para (.*)/i);
       const toName = (matchBy?.[1] || matchSimple?.[1] || matchAtribuiu?.[2] || matchTransferiu?.[2] || '').trim();
       let fromName = (matchBy?.[2] || matchAtribuiu?.[1] || matchTransferiu?.[1] || '').trim();
-      if (fromName.toLowerCase().includes('gabriel souza')) {
+      // Auto-atribuição: se from === to, não faz sentido mostrar quem transferiu
+      if (fromName.toLowerCase() === toName.toLowerCase()) {
         fromName = '';
       }
       if (toName) {
